@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",                                  /* גרסת ה-JS שתיווצר */
+    "module": "NodeNext",                                /* חובה לעבודה עם type: module */
+    "moduleResolution": "NodeNext",
+    "baseUrl": "./",
+    "outDir": "./dist",                                  /* לאן יילך הקוד המוכן */
+    "esModuleInterop": true,                             /* מאפשר ייבוא נוח של ספריות JS */
+    "forceConsistentCasingInFileNames": true,            
+    "strict": true,                                      /* בדיקת שגיאות מחמירה */
+    "skipLibCheck": true,                                
+    "rootDir": "./"                                      /* כי index.ts נמצא בשורש השרת */
+  },
+  "include": ["**/*.ts", ".env"],                       /* אילו קבצים לקמפל */
+  "exclude": ["node_modules"]
+}

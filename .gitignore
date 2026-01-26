@@ -1,0 +1,55 @@
+# --- General ---
+node_modules/
+.DS_Store
+*.log
+.vscode/
+.idea/
+*.swp
+*.bak
+
+# --- Environment Variables (CRITICAL) ---
+# התעלמות מכל קובץ env בכל רמות הפרויקט
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# --- Client (Expo/React Native) ---
+client/.expo/
+client/dist/
+client/web-build/
+client/expo-env.d.ts
+client/ios/
+client/android/
+client/.metro-health-check*
+
+# Native Keys/Secrets
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+
+# --- Server (Node.js/Prisma) ---
+server/dist/
+server/src/generated/prisma
+server/*.tsbuildinfo
+
+# SQLite databases (אם אתה משתמש ב-sqlite מקומי)
+server/prisma/*.db
+server/prisma/*.db-journal
+
+# --- Debug/Package Managers ---
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+package-lock.json
+yarn.lock
+# (שים לב: אם אתה עובד לבד, אפשר להשאיר את lock files, 
+# אבל בדרך כלל ב-Monorepo מתעלמים מהם אם יש גרסאות שונות)
+
+# --- Docker ---
+.docker/
