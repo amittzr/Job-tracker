@@ -1,23 +1,18 @@
 import axios from 'axios';
 import { Platform } from 'react-native';
 
-// חשוב: החלף את 192.168.1.XX בכתובת ה-IP האמיתית של המחשב שלך
-// תוכל למצוא אותה על ידי פקודת 'ipconfig' בטרמינל
+// Configuration for local development machine IP
+// Replace with your actual machine IP from: ipconfig (Windows) or ifconfig (Linux/Mac)
+const DEV_MACHINE_IP = '192.168.1.36';
 
-// 1. הגדרת ה-IP של המחשב שלך ברשת המקומית (תחליף ל-IP שלך מ-ipconfig)
-const DEV_MACHINE_IP = '192.168.1.36'; 
-
-// 2. בחירה אוטומטית של הכתובת לפי הפלטפורמה
+// Determine the API base URL based on platform
 const getBaseURL = () => {
   if (Platform.OS === 'web') {
     return 'http://localhost:3000/api';
   }
   
-  // אם אתה באנדרואיד (אמולטור), הוא יודע לגשת למחשב דרך הכתובת המיוחדת הזו
-  // אם אתה במכשיר פיזי, הוא ישתמש ב-IP של המחשב
-  return Platform.OS === 'android' 
-    ? `http://${DEV_MACHINE_IP}:3000/api` 
-    : `http://${DEV_MACHINE_IP}:3000/api`;
+  // For both Android emulator and physical devices, use machine IP
+  return `http://${DEV_MACHINE_IP}:3000/api`;
 };
 
 const api = axios.create({
@@ -25,15 +20,33 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 10000, // הוספת Timeout כדי שלא ייתקע לנצח בטעינה
+  timeout: 35000,
 });
 
+// Fetch all jobs for a specific user
 export const getJobs = async (userId: string) => {
   try {
     const response = await api.get(`/jobs/${userId}`);
     return response.data;
   } catch (error) {
     console.error("API Error (getJobs):", error);
+    throw error;
+  }
+};
+
+// Auto-add a job using AI analysis of URL
+export const autoAddJob = async (url: string, userId: string) => {
+  try {
+    console.log(`Sending auto-add request: url=${url}, userId=${userId}`);
+    const response = await api.post('/jobs/auto-add', { url, userId });
+    console.log("Auto-add response:", response.data);
+    return response.data;
+  } catch (error: any) {
+    console.error("API autoAddJob error:", error.message);
+    if (error.response) {
+      console.error("Response status:", error.response.status);
+      console.error("Response data:", error.response.data);
+    }
     throw error;
   }
 };
