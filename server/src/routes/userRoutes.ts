@@ -11,6 +11,8 @@ import {
   deleteCV
 } from '../controllers/userController.js';
 import { authMiddleware, ownershipMiddleware } from '../middleware/authMiddleware.js';
+import { validate } from '../middleware/validate.js';
+import { signupSchema, updateProfileSchema } from '../validators/schemas.js';
 
 const router = Router();
 
@@ -69,11 +71,11 @@ function uploadSingle(fieldName: string) {
 }
 
 // ─── Public Routes ────────────────────────────────────────────────────────────
-router.post('/signup', signup);
+router.post('/signup', validate(signupSchema), signup);
 
 // ─── Protected Routes (require auth + ownership) ─────────────────────────────
 router.get('/:userId/profile', authMiddleware, ownershipMiddleware, getUserProfile);
-router.patch('/:userId/profile', authMiddleware, ownershipMiddleware, updateUserProfile);
+router.patch('/:userId/profile', authMiddleware, ownershipMiddleware, validate(updateProfileSchema), updateUserProfile);
 router.post('/:userId/cv/upload', authMiddleware, ownershipMiddleware, uploadSingle('cv'), uploadCV);
 router.get('/:userId/cv/download', authMiddleware, ownershipMiddleware, getCV);
 router.delete('/:userId/cv', authMiddleware, ownershipMiddleware, deleteCV);

@@ -7,6 +7,7 @@ import path from 'path';
 import userRoutes from './routes/userRoutes.js';
 import jobRoutes from './routes/jobRoutes.js';
 import { authMiddleware } from './middleware/authMiddleware.js';
+import { globalErrorHandler, notFoundHandler } from './middleware/errorHandler.js';
 
 dotenv.config();
 
@@ -24,10 +25,15 @@ app.get('/health', (req, res) => {
 });
 
 // Public route: signup (needs to work before user has a DB record)
-// The signup route is handled inside userRoutes but doesn't require auth
 app.use('/api/users', userRoutes);
 
 // Protected routes: require valid Firebase token
 app.use('/api/jobs', authMiddleware, jobRoutes);
+
+// 404 handler — catches requests to undefined routes
+app.use(notFoundHandler);
+
+// Global error handler — catches all unhandled errors (MUST be last)
+app.use(globalErrorHandler);
 
 export default app;
