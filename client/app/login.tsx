@@ -1,37 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Platform } from 'react-native';
+import { StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Platform, TextInput } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { router } from 'expo-router';
-import { GoogleAuthProvider, signInWithPopup, signInWithCredential } from 'firebase/auth';
-import * as Google from 'expo-auth-session/providers/google';
-import * as WebBrowser from 'expo-web-browser';
+import { GoogleAuthProvider, signInWithPopup, signInWithCredential, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
-
-WebBrowser.maybeCompleteAuthSession();
 
 const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '';
 
 export default function LoginScreen() {
   const { user, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(false);
-
-  // expo-auth-session for mobile (Expo Go)
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId: GOOGLE_WEB_CLIENT_ID,
-    scopes: ['profile', 'email'],
-  });
-
-  // Handle mobile Google auth response
-  useEffect(() => {
-    if (response?.type === 'success') {
-      const idToken = response.authentication?.idToken;
-      if (idToken) {
-        handleFirebaseSignIn(idToken);
-      }
-    }
-  }, [response]);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   // If user is already logged in, redirect
   useEffect(() => {
@@ -49,7 +31,6 @@ export default function LoginScreen() {
       const firebaseUser = result.user;
       const firebaseToken = await firebaseUser.getIdToken();
 
-      // Sync with backend
       await api.post('/users/signup', {
         email: firebaseUser.email,
         firebaseUid: firebaseUser.uid,
@@ -69,12 +50,36 @@ export default function LoginScreen() {
     }
   };
 
-  // Mobile: use credential from expo-auth-session
-  const handleFirebaseSignIn = async (idToken: string) => {
+  // Mobile: not supported in Expo Go (requires development build)
+  const handleMobileGoogleSignIn = () => {
+    Alert.alert(
+      'לא זמין',
+      'התחברות Google במובייל דורשת development build.\nנסה דרך Web (לחץ w בטרמינל של Expo).'
+    );
+  };
+
+  // Email/Password login (for development purposes)
+  const handleEmailLogin = async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('שגיאה', 'נא למלא אימייל וסיסמה');
+      return;
+    }
+
     setLoading(true);
     try {
-      const credential = GoogleAuthProvider.credential(idToken);
-      const userCredential = await signInWithCredential(auth, credential);
+      let userCredential;
+      try {
+        // Try to sign in
+        userCredential = await signInWithEmailAndPassword(auth, email.trim(), password.trim());
+      } catch (signInError: any) {
+        if (signInError.code === 'auth/user-not-found' || signInError.code === 'auth/invalid-credential') {
+          // User doesn't exist — create account
+          userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password.trim());
+        } else {
+          throw signInError;
+        }
+      }
+
       const firebaseUser = userCredential.user;
       const firebaseToken = await firebaseUser.getIdToken();
 
@@ -82,26 +87,29 @@ export default function LoginScreen() {
       await api.post('/users/signup', {
         email: firebaseUser.email,
         firebaseUid: firebaseUser.uid,
-        displayName: firebaseUser.displayName,
+        displayName: firebaseUser.email?.split('@')[0],
       }, {
         headers: { Authorization: `Bearer ${firebaseToken}` }
       });
 
       router.replace('/(tabs)');
     } catch (error: any) {
-      console.error('Mobile Google sign-in error:', error);
-      Alert.alert('שגיאה', 'ההתחברות נכשלה. נסה שוב.');
+      console.error('Email login error:', error);
+      let msg = 'ההתחברות נכשלה';
+      if (error.code === 'auth/wrong-password') msg = 'סיסמה שגויה';
+      if (error.code === 'auth/invalid-email') msg = 'אימייל לא תקין';
+      if (error.code === 'auth/weak-password') msg = 'סיסמה חייבת להיות לפחות 6 תווים';
+      Alert.alert('שגיאה', msg);
     } finally {
       setLoading(false);
     }
   };
 
-  // Choose the right sign-in method based on platform
   const handleSignIn = () => {
     if (Platform.OS === 'web') {
       handleWebGoogleSignIn();
     } else {
-      promptAsync();
+      handleMobileGoogleSignIn();
     }
   };
 
@@ -123,9 +131,9 @@ export default function LoginScreen() {
       </View>
 
       <TouchableOpacity
-        style={[styles.googleButton, (loading || (!request && Platform.OS !== 'web')) && { opacity: 0.6 }]}
+        style={[styles.googleButton, loading && { opacity: 0.6 }]}
         onPress={handleSignIn}
-        disabled={loading || (!request && Platform.OS !== 'web')}
+        disabled={loading}
       >
         {loading ? (
           <ActivityIndicator color="#333" />
@@ -137,8 +145,40 @@ export default function LoginScreen() {
         )}
       </TouchableOpacity>
 
+      {/* Email login - for development */}
+      <View style={styles.divider}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>או</Text>
+        <View style={styles.dividerLine} />
+      </View>
+
+      <TextInput
+        style={styles.input}
+        placeholder="אימייל"
+        value={email}
+        onChangeText={setEmail}
+        keyboardType="email-address"
+        autoCapitalize="none"
+        placeholderTextColor="#999"
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="סיסמה (מינימום 6 תווים)"
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry
+        placeholderTextColor="#999"
+      />
+      <TouchableOpacity
+        style={[styles.emailButton, loading && { opacity: 0.6 }]}
+        onPress={handleEmailLogin}
+        disabled={loading}
+      >
+        <Text style={styles.emailButtonText}>כניסה עם אימייל</Text>
+      </TouchableOpacity>
+
       <Text style={styles.footerText}>
-        ההתחברות מאובטחת באמצעות Google SSO
+        ההתחברות מאובטחת באמצעות Firebase Auth
       </Text>
     </View>
   );
@@ -201,5 +241,46 @@ const styles = StyleSheet.create({
     marginTop: 30,
     fontSize: 12,
     color: '#999',
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#ddd',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#999',
+    fontSize: 13,
+  },
+  input: {
+    width: '100%',
+    height: 50,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    marginBottom: 12,
+    fontSize: 15,
+    backgroundColor: '#fff',
+    color: '#1a1a1a',
+  },
+  emailButton: {
+    backgroundColor: '#2f95dc',
+    width: '100%',
+    height: 50,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emailButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
