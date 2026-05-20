@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createManualJob, getUserJobs, getJobById, deleteJob, updateJobStatus, getJobStats, autoCreateJob, analyzeCVForJobDescription } from '../controllers/jobController.js';
+import { createManualJob, getUserJobs, getJobById, deleteJob, updateJobStatus, updateJobDetails, getJobStats, autoCreateJob, analyzeCVForJobDescription } from '../controllers/jobController.js';
 import { validate } from '../middleware/validate.js';
 import { createJobSchema, autoAddJobSchema, updateStatusSchema, analyzeCVSchema } from '../validators/schemas.js';
 
@@ -25,6 +25,9 @@ router.get('/detail/:id', getJobById);
 
 // Update job status
 router.patch('/:id/status', validate(updateStatusSchema), updateJobStatus);
+
+// Update job details (experience, location)
+router.patch('/:id/details', updateJobDetails);
 
 // Delete a job
 router.delete('/:id', deleteJob);

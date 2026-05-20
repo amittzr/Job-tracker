@@ -1,5 +1,5 @@
 import { useLocalSearchParams, Stack, router } from 'expo-router';
-import { StyleSheet, ActivityIndicator, TouchableOpacity, Alert, ScrollView, Linking } from 'react-native';
+import { StyleSheet, ActivityIndicator, TouchableOpacity, Alert, ScrollView, Linking, TextInput } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { useEffect, useState } from 'react';
 import { FontAwesome } from '@expo/vector-icons';
@@ -12,6 +12,9 @@ export default function JobDetailScreen() {
   const [job, setJob] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isEditingStatus, setIsEditingStatus] = useState(false);
+  const [isEditingDetails, setIsEditingDetails] = useState(false);
+  const [editExperience, setEditExperience] = useState('');
+  const [editLocation, setEditLocation] = useState('');
 
   useEffect(() => {
     fetchJobDetails();
@@ -41,6 +44,19 @@ export default function JobDetailScreen() {
       setIsEditingStatus(false);
     } catch (error) {
       Alert.alert('שגיאה', 'עדכון הסטטוס נכשל');
+    }
+  };
+
+  const saveDetails = async () => {
+    try {
+      await api.patch(`/jobs/${id}/details`, {
+        requiredExperience: editExperience.trim() || null,
+        location: editLocation.trim() || null,
+      });
+      setJob({ ...job, requiredExperience: editExperience.trim(), location: editLocation.trim() });
+      setIsEditingDetails(false);
+    } catch (error) {
+      Alert.alert('שגיאה', 'השמירה נכשלה');
     }
   };
 
@@ -91,6 +107,60 @@ export default function JobDetailScreen() {
           </View>
         )}
 
+        {/* שנות ניסיון + מיקום — עם אפשרות עריכה */}
+        <View style={styles.editableSection}>
+          <View style={styles.editableHeader}>
+            <Text style={styles.editableSectionTitle}>פרטים נוספים</Text>
+            <TouchableOpacity
+              style={styles.editIcon}
+              onPress={() => {
+                if (!isEditingDetails) {
+                  setEditExperience(job?.requiredExperience || '');
+                  setEditLocation(job?.location || '');
+                }
+                setIsEditingDetails(!isEditingDetails);
+              }}
+            >
+              <FontAwesome name={isEditingDetails ? "check" : "pencil"} size={16} color="#2f95dc" />
+            </TouchableOpacity>
+          </View>
+
+          {isEditingDetails ? (
+            <View>
+              <Text style={styles.label}>דרישת שנות ניסיון</Text>
+              <TextInput
+                style={styles.editInput}
+                value={editExperience}
+                onChangeText={setEditExperience}
+                placeholder="למשל: 5+ years"
+                textAlign="right"
+              />
+              <Text style={styles.label}>מיקום המשרה</Text>
+              <TextInput
+                style={styles.editInput}
+                value={editLocation}
+                onChangeText={setEditLocation}
+                placeholder="למשל: Tel Aviv, Hybrid"
+                textAlign="right"
+              />
+              <TouchableOpacity style={styles.saveDetailsBtn} onPress={saveDetails}>
+                <Text style={styles.saveDetailsBtnText}>שמור</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>שנות ניסיון:</Text>
+                <Text style={styles.detailValue}>{job?.requiredExperience || 'לא צוין'}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>מיקום:</Text>
+                <Text style={styles.detailValue}>{job?.location || 'לא צוין'}</Text>
+              </View>
+            </View>
+          )}
+        </View>
+
         {job?.notes && (
           <View style={styles.infoSection}>
             <Text style={styles.label}>הערות אישיות</Text>
@@ -131,6 +201,19 @@ export default function JobDetailScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+          </View>
+        )}
+
+        {/* כפתור ניתוח התאמה */}
+        {job?.jobDescription && (
+          <View style={styles.analyzeSection}>
+            <TouchableOpacity 
+              style={styles.analyzeButton} 
+              onPress={() => router.push('/job-analysis')}
+            >
+              <FontAwesome name="flask" size={16} color="#fff" />
+              <Text style={styles.analyzeText}>נתח התאמה למשרה</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -220,6 +303,18 @@ const styles = StyleSheet.create({
   optionText: { fontSize: 13, color: '#666' },
   activeOptionText: { color: '#fff', fontWeight: 'bold' },
   footer: { marginTop: 40, alignItems: 'center' },
+  editableSection: { marginTop: 10, paddingTop: 15, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
+  editableHeader: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  editableSectionTitle: { fontSize: 15, fontWeight: '700', color: '#333' },
+  detailRow: { flexDirection: 'row-reverse', justifyContent: 'space-between', marginBottom: 8 },
+  detailLabel: { fontSize: 14, color: '#666' },
+  detailValue: { fontSize: 14, fontWeight: '600', color: '#1a1a1a' },
+  editInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, fontSize: 14, backgroundColor: '#f9f9f9', marginBottom: 10, textAlign: 'right' },
+  saveDetailsBtn: { backgroundColor: '#2f95dc', padding: 10, borderRadius: 8, alignItems: 'center', marginTop: 5 },
+  saveDetailsBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  analyzeSection: { marginTop: 20, paddingTop: 20, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
+  analyzeButton: { backgroundColor: '#0066cc', flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', padding: 14, borderRadius: 12, gap: 8 },
+  analyzeText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   deleteButton: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
   deleteText: { color: '#FF3B30', fontWeight: '600', fontSize: 14 }
 });

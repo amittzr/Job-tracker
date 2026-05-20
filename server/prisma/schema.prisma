@@ -37,14 +37,16 @@ model UserProfile {
 }
 
 model JobApplication {
-  id              String   @id @default(uuid())
-  companyName     String
-  jobTitle        String
-  status          String   @default("PENDING")
-  jobDescription  String?
-  link            String?  // שדה חדש (סימן השאלה אומר שהוא רשות)
-  notes           String?
-  createdAt       DateTime @default(now())
-  user            User     @relation(fields: [userId], references: [id])
-  userId          String
+  id                 String   @id @default(uuid())
+  companyName        String
+  jobTitle           String
+  status             String   @default("PENDING")
+  jobDescription     String?
+  link               String?
+  notes              String?
+  requiredExperience String?  // e.g. "3+ years", "5-7 years"
+  location           String?  // e.g. "Tel Aviv, Hybrid", "Remote"
+  createdAt          DateTime @default(now())
+  user               User     @relation(fields: [userId], references: [id])
+  userId             String
 }

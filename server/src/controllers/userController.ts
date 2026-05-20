@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import prisma from '../config/db.js';
 import fs from 'fs';
 import path from 'path';
+// @ts-ignore - pdf-parse v1 is CommonJS
+import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 
 // Ensure uploads directory exists on startup
 const UPLOADS_DIR = path.resolve('uploads');
@@ -120,9 +122,6 @@ async function extractTextFromFile(filePath: string, mimeType: string, originalN
     }
 
     if (mimeType === 'application/pdf') {
-      // Dynamically import so the app still boots even if pdf-parse isn't installed yet
-      // @ts-ignore
-      const pdfParse = (await import('pdf-parse')).default;
       const buffer = fs.readFileSync(filePath);
       const data = await pdfParse(buffer);
       return data.text;

@@ -55,7 +55,7 @@ export const analyzeJobFromUrl = async (url: string) => {
         const groqResponse = await axios.post(
           "https://api.groq.com/openai/v1/chat/completions",
           {
-            model: "mixtral-8x7b-32768",
+            model: "llama-3.1-8b-instant",
             messages: [
               {
                 role: "system",
@@ -64,14 +64,16 @@ export const analyzeJobFromUrl = async (url: string) => {
               {
                 role: "user",
                 content: `Extract these fields from the job posting text. Return ONLY this JSON format (no markdown):
-{"companyName": "company or organization name", "jobTitle": "job position title", "jobDescription": "3-4 sentence summary of the role, responsibilities, and requirements", "status": "pending"}
+{"companyName": "company or organization name", "jobTitle": "job position title", "jobDescription": "3-4 sentence summary of the role, responsibilities, and requirements", "requiredExperience": "years of experience required, e.g. '3+ years' or '5-7 years' or 'Not specified'. Look in qualifications/requirements sections for phrases like 'X+ years', 'X years of experience'", "location": "job location and work model, e.g. 'Tel Aviv, Hybrid' or 'New York, On-site' or 'Remote' or 'Not specified'", "status": "pending"}
+
+IMPORTANT: Look carefully in the Qualifications, Requirements, and Basic Qualifications sections for years of experience. Also look for location/city mentions anywhere in the text.
 
 Job posting text:
-${scraped.text.substring(0, 1200)}`,
+${scraped.text.substring(0, 2500)}`,
               },
             ],
             temperature: 0.1,
-            max_tokens: 500,
+            max_tokens: 700,
           },
           {
             headers: { Authorization: `Bearer ${groqApiKey}` },
@@ -91,10 +93,14 @@ ${scraped.text.substring(0, 1200)}`,
             // If Groq extracted good data, use it
             if (companyName.length > 1 && jobTitle.length > 3 && jobDesc.length > 60) {
               console.log("[AI Service] Groq extraction successful");
+              const expFromAI = (parsed.requiredExperience || "").trim();
+              const locFromAI = (parsed.location || "").trim();
               return {
                 companyName: companyName || "Unknown Company",
                 jobTitle: jobTitle || "New Position",
                 jobDescription: jobDesc,
+                requiredExperience: (expFromAI && expFromAI !== "Not specified") ? expFromAI : extractExperienceFromText(scraped.text),
+                location: (locFromAI && locFromAI !== "Not specified") ? locFromAI : extractLocationFromText(scraped.text),
                 status: "pending",
               };
             } else {
@@ -130,7 +136,7 @@ ${scraped.text.substring(0, 1200)}`,
         const groqRetry = await axios.post(
           "https://api.groq.com/openai/v1/chat/completions",
           {
-            model: "mixtral-8x7b-32768",
+            model: "llama-3.1-8b-instant",
             messages: [
               {
                 role: "system",
@@ -171,13 +177,73 @@ ${scraped.text.substring(0, 1200)}`,
       companyName: "Unknown Company",
       jobTitle: "New Position",
       jobDescription: "Unable to analyze. Please update manually.",
+      requiredExperience: "Not specified",
+      location: "Not specified",
       status: "pending",
     };
   }
 };
 
+// Extract years of experience from text using regex patterns
+function extractExperienceFromText(text: string): string {
+  // Normalize whitespace
+  const normalized = text.replace(/\s+/g, ' ');
+  
+  const patterns = [
+    // "5+ years of non-internship professional software development experience"
+    /(\d+)\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:[\w\s,-]{0,80}?)experience/gi,
+    // "minimum 3 years experience" / "at least 5 years"
+    /(?:minimum|at least|requires?|must have)\s*(\d+)\+?\s*(?:years?|yrs?)/gi,
+    // "experience: 5+ years" / "experience of 3 years"
+    /experience\s*(?:of|:|-|–)?\s*(\d+)\+?\s*(?:years?|yrs?)/gi,
+    // "3-5 years of experience" / "3 to 5 years"
+    /(\d+)\s*(?:-|to)\s*(\d+)\s*(?:years?|yrs?)\s+(?:of\s+)?(?:[\w\s,-]{0,50}?)experience/gi,
+    // Simple: "5+ years" near qualifications context
+    /(\d+)\+\s*(?:years?|yrs?)/gi,
+  ];
+
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0; // Reset regex state
+    const match = pattern.exec(normalized);
+    if (match) {
+      if (match[2]) {
+        return `${match[1]}-${match[2]} years`;
+      }
+      const num = match[1];
+      // Ignore "1 year" as it's usually not a real requirement
+      if (parseInt(num) >= 2) {
+        return `${num}+ years`;
+      }
+    }
+  }
+  return "Not specified";
+}
+
+// Extract location from text using regex patterns
+function extractLocationFromText(text: string): string {
+  const patterns = [
+    /(?:location|office|based in|work location|job location)[:\s]*([A-Z][a-zA-Z\s,]+?)(?:\n|\.|\||–|-|;)/i,
+    /(?:hybrid|on-site|remote|in-office)[\s,]*(?:in\s+)?([A-Z][a-zA-Z\s,]+?)(?:\n|\.|\||–|-|;)/i,
+    /((?:Tel Aviv|Jerusalem|Haifa|Ramat Gan|Herzliya|Petah Tikva|Beer Sheva|New York|San Francisco|London|Berlin|Seattle|Austin)[,\s]*(?:Israel|IL|US|USA|UK|DE|Hybrid|Remote|On-site|On site)?)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  // Check for remote/hybrid keywords
+  if (/\bfully remote\b/i.test(text)) return "Remote";
+  if (/\bhybrid\b/i.test(text)) return "Hybrid";
+  if (/\bon-site\b|\bon site\b|\bin-office\b/i.test(text)) return "On-site";
+
+  return "Not specified";
+}
+
 // Smart text extraction without AI
-function extractJobDetailsFromText(scraped: { text: string; html: string; title: string }, url: string): { companyName: string; jobTitle: string; jobDescription: string; status: string; titleFromPage?: boolean } {
+function extractJobDetailsFromText(scraped: { text: string; html: string; title: string }, url: string): { companyName: string; jobTitle: string; jobDescription: string; requiredExperience: string; location: string; status: string; titleFromPage?: boolean } {
   const cleanText = scraped.text.replace(/\s+/g, " ").trim();
   const $ = cheerio.load(scraped.html);
 
@@ -397,6 +463,8 @@ function extractJobDetailsFromText(scraped: { text: string; html: string; title:
     companyName: company,
     jobTitle: title,
     jobDescription: description.trim(),
+    requiredExperience: extractExperienceFromText(cleanText),
+    location: extractLocationFromText(cleanText),
     status: "pending",
     titleFromPage,
   };
@@ -404,8 +472,7 @@ function extractJobDetailsFromText(scraped: { text: string; html: string; title:
 
 /**
  * Analyze CV Match Against Job Description using Groq API
- * Compares user's CV skills and experience against job requirements
- * and provides actionable feedback with match percentage score
+ * Enhanced analysis with focus on: experience years, location, skills, requirements
  */
 export async function analyzeCVForJob(
   cvText: string,
@@ -414,98 +481,118 @@ export async function analyzeCVForJob(
   userSkills?: string
 ): Promise<{
   matchPercentage: number;
+  experienceMatch: { required: string; yours: string; gap: string };
+  locationMatch: { jobLocation: string; compatible: boolean; note: string };
+  skillsAnalysis: { matched: string[]; missing: string[]; bonus: string[] };
+  requirementsAnalysis: { met: string[]; notMet: string[]; partial: string[] };
   strengths: string[];
-  gaps: string[];
   suggestions: string[];
   summary: string;
 }> {
   try {
-    // Build comprehensive prompt for CV analysis
-    const analysisPrompt = `You are a professional career coach and recruiter. Analyze how well a candidate's CV matches a specific job description.
+    const analysisPrompt = `You are an expert career coach and technical recruiter. Perform a detailed analysis of how well a candidate's CV matches a job description.
 
 CANDIDATE'S CV:
 ${cvText}
 
-CANDIDATE'S SKILLS:
-${userSkills || "Not provided"}
+CANDIDATE'S LISTED SKILLS:
+${userSkills || "Not provided separately"}
 
 TARGET JOB TITLE:
 ${jobTitle}
 
-TARGET JOB DESCRIPTION:
+TARGET JOB DESCRIPTION / REQUIREMENTS:
 ${jobDescription}
 
-Please provide a detailed analysis in JSON format with the following structure:
+Analyze and return ONLY valid JSON (no markdown, no extra text) with this exact structure:
 {
-  "matchPercentage": <number 0-100>,
-  "strengths": [<list of 3-5 areas where candidate is strong>],
-  "gaps": [<list of 3-5 technical or soft skills gaps>],
-  "suggestions": [<list of 3-5 actionable tips to improve CV or application>],
-  "summary": "<2-3 sentence overall assessment>"
+  "matchPercentage": <number 0-100, overall fit score>,
+  "experienceMatch": {
+    "required": "<years required by the JOB, from the job description. e.g. '5+ years' or 'Not specified'>",
+    "yours": "<candidate's total years of professional experience. Calculate from the earliest start year in the Experience section of the CV to 2026. If no Experience section exists or no work dates found, write '0 years'>",
+    "gap": "<difference or 'Meets requirement'>"
+  },
+  "locationMatch": {
+    "jobLocation": "<location from the JOB DESCRIPTION only, e.g. 'Tel Aviv, Hybrid' or 'Remote' or 'Not specified'>",
+    "compatible": <true if job is remote or location not specified, false if candidate location clearly conflicts>,
+    "note": "<brief explanation>"
+  },
+  "skillsAnalysis": {
+    "matched": [<skills from job that candidate HAS based on CV, max 8>],
+    "missing": [<skills from job that candidate LACKS based on CV, max 5>],
+    "bonus": [<candidate skills not required but valuable, max 3>]
+  },
+  "requirementsAnalysis": {
+    "met": [<requirements from job description that are fully met by CV>],
+    "notMet": [<requirements from job description clearly not met by CV>],
+    "partial": [<requirements partially met with explanation>]
+  },
+  "strengths": [<3-5 strongest selling points for this specific role>],
+  "suggestions": [<3-5 actionable tips to improve chances: what to add to CV, what to highlight, what to learn>],
+  "summary": "<3 sentence assessment: overall fit, main advantage, main risk>"
 }
 
-Be specific and reference actual technologies, tools, or experience mentioned in the CV and job description.
-Return ONLY valid JSON, no additional text.`;
+CRITICAL RULES:
+- experienceMatch.yours: Count years from the EARLIEST employment start date in the CV's Experience section to the year 2026. Example: if earliest job started in 2024, yours = "2 years". If no Experience section or no dates, yours = "0 years"
+- experienceMatch.required: Extract ONLY from the job description requirements/qualifications
+- locationMatch.jobLocation: Extract ONLY from the job description, NOT from the CV
+- Skills should be exact technology/tool names (React, not "frontend frameworks")
+- Return ONLY the JSON object, nothing else`;
 
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
-        model: 'mixtral-8x7b-32768',
+        model: 'llama-3.1-8b-instant',
         messages: [
-          {
-            role: 'user',
-            content: analysisPrompt
-          }
+          { role: 'user', content: analysisPrompt }
         ],
-        temperature: 0.3,
-        max_tokens: 1000
+        temperature: 0.2,
+        max_tokens: 1500
       },
       {
         headers: {
           Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 30000
       }
     );
 
-    // Parse response
     if (!response.data.choices?.[0]?.message?.content) {
       throw new Error('Invalid Groq response');
     }
 
     const content = response.data.choices[0].message.content;
-    
-    // Extract JSON from response (handle potential markdown formatting)
-    let jsonStr = content;
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[0];
-    }
-
+    const jsonStr = jsonMatch ? jsonMatch[0] : content;
     const analysis = JSON.parse(jsonStr);
 
-    // Validate response structure
-    if (
-      typeof analysis.matchPercentage === 'number' &&
-      Array.isArray(analysis.strengths) &&
-      Array.isArray(analysis.gaps) &&
-      Array.isArray(analysis.suggestions) &&
-      typeof analysis.summary === 'string'
-    ) {
-      // Ensure matchPercentage is between 0-100
+    // Ensure matchPercentage is valid
+    if (typeof analysis.matchPercentage === 'number') {
       analysis.matchPercentage = Math.min(100, Math.max(0, analysis.matchPercentage));
-      return analysis;
     }
 
-    throw new Error('Invalid response structure from Groq');
+    // Fill defaults for missing fields
+    return {
+      matchPercentage: analysis.matchPercentage ?? 0,
+      experienceMatch: analysis.experienceMatch ?? { required: "Not specified", yours: "Unknown", gap: "Unable to determine" },
+      locationMatch: analysis.locationMatch ?? { jobLocation: "Not specified", compatible: true, note: "Location not mentioned" },
+      skillsAnalysis: analysis.skillsAnalysis ?? { matched: [], missing: [], bonus: [] },
+      requirementsAnalysis: analysis.requirementsAnalysis ?? { met: [], notMet: [], partial: [] },
+      strengths: analysis.strengths ?? [],
+      suggestions: analysis.suggestions ?? [],
+      summary: analysis.summary ?? "Analysis completed.",
+    };
   } catch (error) {
     console.error("[AI Service] CV analysis error:", error);
     
-    // Return default response on error
     return {
       matchPercentage: 0,
+      experienceMatch: { required: "Unknown", yours: "Unknown", gap: "Analysis failed" },
+      locationMatch: { jobLocation: "Unknown", compatible: true, note: "Analysis failed" },
+      skillsAnalysis: { matched: [], missing: [], bonus: [] },
+      requirementsAnalysis: { met: [], notMet: [], partial: [] },
       strengths: ["Unable to analyze CV"],
-      gaps: ["Analysis failed - please try again"],
       suggestions: ["Please ensure your CV and job description are clearly formatted"],
       summary: "Analysis could not be completed. Please check your inputs and try again."
     };

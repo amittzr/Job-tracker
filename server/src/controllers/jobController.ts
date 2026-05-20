@@ -85,6 +85,22 @@ export const updateJobStatus = async (req: Request, res: Response) => {
   }
 };
 
+export const updateJobDetails = async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const { requiredExperience, location } = req.body;
+    
+    const updatedJob = await prisma.jobApplication.update({
+      where: { id },
+      data: { requiredExperience, location }
+    });
+    
+    res.json(updatedJob);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to update job details" });
+  }
+};
+
 export const getJobStats = async (req: Request, res: Response) => {
   try {
     const userId = req.params.userId as string;
@@ -132,6 +148,8 @@ export const autoCreateJob = async (req: Request, res: Response) => {
         companyName: aiData.companyName,
         jobTitle: aiData.jobTitle,
         jobDescription: aiData.jobDescription,
+        requiredExperience: aiData.requiredExperience || null,
+        location: aiData.location || null,
         status: aiData.status || "pending",
         link: url,
         userId: userId
