@@ -151,24 +151,6 @@ GROQ_API_KEY=<your_key>
 
 
 
-
-npm install firebase
-
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyAMGMPprdQKMCp0StHNpCIOGgxEnl0JDe8",
-  authDomain: "job-tracker-ai-2245d.firebaseapp.com",
-  projectId: "job-tracker-ai-2245d",
-  storageBucket: "job-tracker-ai-2245d.firebasestorage.app",
-  messagingSenderId: "535026496866",
-  appId: "1:535026496866:web:0d8ba9feb16e2cfb2aa83b"
-};
-
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
