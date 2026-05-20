@@ -10,14 +10,13 @@ import {
   StyleSheet,
   RefreshControl,
   Linking,
+  Platform,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FontAwesome } from '@expo/vector-icons';
-import axios from 'axios';
 import * as DocumentPicker from 'expo-document-picker';
 import { useIsFocused } from '@react-navigation/native';
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.36:3000/api';
+import { useAuth } from '../../context/AuthContext';
+import api from '../../services/api';
 
 interface UserProfileData {
   id: string;
@@ -32,14 +31,9 @@ interface UserProfileData {
   updatedAt: string;
 }
 
-interface User {
-  id: string;
-  email: string;
-}
-
 export default function ProfileTab() {
   const isFocused = useIsFocused();
-  const [user, setUser] = useState<User | null>(null);
+  const { user: firebaseUser } = useAuth();
   const [profile, setProfile] = useState<UserProfileData | null>(null);
   const [fullName, setFullName] = useState('');
   const [professionalTitle, setProfessionalTitle] = useState('');
@@ -54,27 +48,23 @@ export default function ProfileTab() {
 
   useEffect(() => {
     if (isFocused) {
-      loadUserAndProfile();
+      loadProfile();
     }
   }, [isFocused]);
 
-  const loadUserAndProfile = async () => {
+  const loadProfile = async () => {
     try {
       setLoading(true);
-      const userString = await AsyncStorage.getItem('user');
-      if (!userString) {
+      if (!firebaseUser) {
         Alert.alert('Error', 'User not found');
         return;
       }
 
-      const userData: User = JSON.parse(userString);
-      setUser(userData);
-
-      const defaultName = userData.email.split('@')[0];
+      const defaultName = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || '';
       setFullName(defaultName);
 
       try {
-        const response = await axios.get(`${API_BASE_URL}/users/${userData.id}/profile`);
+        const response = await api.get(`/users/${firebaseUser.uid}/profile`);
         setProfile(response.data);
         setFullName(response.data.fullName || defaultName);
         setProfessionalTitle(response.data.professionalTitle || '');
@@ -93,8 +83,8 @@ export default function ProfileTab() {
         }
       }
     } catch (error) {
-      console.error('Error loading user:', error);
-      Alert.alert('Error', 'Failed to load user data');
+      console.error('Error loading profile:', error);
+      Alert.alert('Error', 'Failed to load profile data');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -102,7 +92,7 @@ export default function ProfileTab() {
   };
 
   const handleSaveProfile = async () => {
-    if (!user?.id) return Alert.alert('Error', 'User not authenticated');
+    if (!firebaseUser?.uid) return Alert.alert('Error', 'User not authenticated');
     if (!fullName.trim()) return Alert.alert('Validation', 'Please enter your name');
 
     setSaving(true);
@@ -112,7 +102,7 @@ export default function ProfileTab() {
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
 
-      await axios.patch(`${API_BASE_URL}/users/${user.id}/profile`, {
+      await api.patch(`/users/${firebaseUser.uid}/profile`, {
         fullName: fullName.trim(),
         professionalTitle: professionalTitle.trim(),
         contactInfo: contactInfo.trim(),
@@ -120,7 +110,7 @@ export default function ProfileTab() {
       });
 
       Alert.alert('Success', 'Profile updated successfully');
-      loadUserAndProfile();
+      loadProfile();
     } catch (error) {
       console.error('Error saving profile:', error);
       Alert.alert('Error', 'Failed to save profile');
@@ -131,12 +121,11 @@ export default function ProfileTab() {
 
   // ─── Upload CV ──────────────────────────────────────────────────────────────
   const handleUploadCV = async () => {
-    if (!user?.id) return Alert.alert('Error', 'User not authenticated');
+    if (!firebaseUser?.uid) return Alert.alert('Error', 'User not authenticated');
 
     try {
       setUploading(true);
 
-      // expo-document-picker v12+ returns an object with `canceled` + `assets[]`
       const result = await DocumentPicker.getDocumentAsync({
         type: [
           'application/pdf',
@@ -144,56 +133,48 @@ export default function ProfileTab() {
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           'text/plain',
         ],
-        copyToCacheDirectory: true, // ← required: makes the URI readable by the app
+        copyToCacheDirectory: true,
       });
 
-      // ── Handle both old API (type:'success') and new API (canceled + assets) ──
-      let fileUri: string;
-      let fileName: string;
-      let mimeType: string;
-
       if ('canceled' in result) {
-        // New API (expo-document-picker ≥ 11)
         if (result.canceled || !result.assets?.length) {
           setUploading(false);
           return;
         }
-        const asset = result.assets[0];
-        fileUri  = asset.uri;
-        fileName = asset.name;
-        mimeType = asset.mimeType ?? 'application/octet-stream';
-      } else {
-        // Legacy API
-        const legacy = result as any;
-        if (legacy.type !== 'success') {
-          setUploading(false);
-          return;
-        }
-        fileUri  = legacy.uri;
-        fileName = legacy.name;
-        mimeType = legacy.mimeType ?? 'application/octet-stream';
       }
+
+      const asset = (result as any).assets?.[0] || result;
+      const fileUri = asset.uri;
+      const fileName = asset.name || 'cv_file';
+      const mimeType = asset.mimeType ?? 'application/octet-stream';
 
       console.log('[Upload] File selected:', { fileUri, fileName, mimeType });
 
       const formData = new FormData();
-      formData.append('cv', {
-        uri: fileUri,
-        type: mimeType,
-        name: fileName,
-      } as any);
 
-      const uploadUrl = `${API_BASE_URL}/users/${user.id}/cv/upload`;
-      console.log('[Upload] Posting to:', uploadUrl);
+      if (Platform.OS === 'web') {
+        // Web: fetch the blob URI and create a real File object
+        const response = await fetch(fileUri);
+        const blob = await response.blob();
+        const file = new File([blob], fileName, { type: mimeType });
+        formData.append('cv', file);
+      } else {
+        // Mobile: use the React Native format
+        formData.append('cv', {
+          uri: fileUri,
+          type: mimeType,
+          name: fileName,
+        } as any);
+      }
 
-      const response = await axios.post(uploadUrl, formData, {
+      const uploadResponse = await api.post(`/users/${firebaseUser.uid}/cv/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 60_000,
       });
 
-      console.log('[Upload] Success:', response.data);
+      console.log('[Upload] Success:', uploadResponse.data);
       Alert.alert('✅ Success', `CV uploaded!\n${fileName}`);
-      await loadUserAndProfile();
+      await loadProfile();
     } catch (error: any) {
       console.error('[Upload] Error:', error);
 
@@ -201,7 +182,7 @@ export default function ProfileTab() {
       if (error.response) {
         msg = error.response.data?.error || `Server error ${error.response.status}`;
       } else if (error.request) {
-        msg = `No response from server.\nCheck that the backend is running at:\n${API_BASE_URL}`;
+        msg = 'No response from server. Check that the backend is running.';
       } else {
         msg = error.message;
       }
@@ -213,26 +194,66 @@ export default function ProfileTab() {
 
   // ─── View / Download CV ─────────────────────────────────────────────────────
   const handleViewCV = async () => {
-    if (!user?.id || !profile?.cvFileName) {
+    if (!firebaseUser?.uid || !profile?.cvFileName) {
       return Alert.alert('Info', 'No CV uploaded yet');
     }
 
     setDownloading(true);
     try {
-      const downloadUrl = `${API_BASE_URL}/users/${user.id}/cv/download`;
-
-      // Open the URL in the device browser — the browser handles the download
-      const supported = await Linking.canOpenURL(downloadUrl);
-      if (supported) {
-        await Linking.openURL(downloadUrl);
+      if (Platform.OS === 'web') {
+        // Web: download via API with token, then open as blob URL
+        const response = await api.get(`/users/${firebaseUser.uid}/cv/download`, {
+          responseType: 'blob',
+        });
+        const blob = response.data;
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
       } else {
-        Alert.alert('Error', `Cannot open URL: ${downloadUrl}`);
+        // Mobile: open in browser (will need token in future, for now use Linking)
+        const downloadUrl = `${api.defaults.baseURL}/users/${firebaseUser.uid}/cv/download`;
+        await Linking.openURL(downloadUrl);
       }
     } catch (error) {
       console.error('Error opening CV:', error);
       Alert.alert('Error', 'Failed to open CV');
     } finally {
       setDownloading(false);
+    }
+  };
+
+  // ─── Delete CV ──────────────────────────────────────────────────────────────
+  const handleDeleteCV = async () => {
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('האם אתה בטוח שברצונך למחוק את קובץ ה-CV?');
+      if (!confirmed) return;
+    } else {
+      // On mobile, use Alert with callback
+      return new Promise<void>((resolve) => {
+        Alert.alert('מחיקת CV', 'האם אתה בטוח שברצונך למחוק את קובץ ה-CV?', [
+          { text: 'ביטול', style: 'cancel', onPress: () => resolve() },
+          {
+            text: 'מחק',
+            style: 'destructive',
+            onPress: async () => {
+              await performDeleteCV();
+              resolve();
+            },
+          },
+        ]);
+      });
+    }
+
+    await performDeleteCV();
+  };
+
+  const performDeleteCV = async () => {
+    try {
+      await api.delete(`/users/${firebaseUser!.uid}/cv`);
+      Alert.alert('✅', 'CV deleted successfully');
+      await loadProfile();
+    } catch (error) {
+      console.error('Error deleting CV:', error);
+      Alert.alert('Error', 'Failed to delete CV');
     }
   };
 
@@ -247,13 +268,13 @@ export default function ProfileTab() {
   return (
     <ScrollView
       style={styles.container}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadUserAndProfile} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadProfile} />}
     >
       {/* Header */}
       <View style={styles.header}>
         <FontAwesome name="user-circle" size={60} color="#0066cc" />
         <Text style={styles.userName}>{fullName}</Text>
-        <Text style={styles.userEmail}>{user?.email}</Text>
+        <Text style={styles.userEmail}>{firebaseUser?.email}</Text>
       </View>
 
       {/* Personal Information */}
@@ -372,6 +393,16 @@ export default function ProfileTab() {
           </TouchableOpacity>
         )}
 
+        {profile?.cvFileName && (
+          <TouchableOpacity
+            style={[styles.button, styles.deleteButton]}
+            onPress={handleDeleteCV}
+          >
+            <FontAwesome name="trash" size={16} color="#FF3B30" style={{ marginRight: 8 }} />
+            <Text style={styles.deleteButtonText}>Delete CV</Text>
+          </TouchableOpacity>
+        )}
+
         <Text style={styles.helperText}>
           📄 Supported formats: PDF, Word (.docx), Text (.txt){'\n'}
           📦 Max file size: 10 MB
@@ -438,9 +469,11 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: '#0066cc', marginTop: 15 },
   secondaryButton: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#0066cc' },
   outlineButton: { backgroundColor: '#f0f7ff', borderWidth: 1, borderColor: '#0066cc' },
+  deleteButton: { backgroundColor: '#fff0f0', borderWidth: 1, borderColor: '#FF3B30' },
   disabledButton: { opacity: 0.6 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   buttonTextSecondary: { color: '#0066cc', fontSize: 16, fontWeight: '600' },
+  deleteButtonText: { color: '#FF3B30', fontSize: 16, fontWeight: '600' },
   cvCard: {
     flexDirection: 'row',
     backgroundColor: '#f0f7ff',

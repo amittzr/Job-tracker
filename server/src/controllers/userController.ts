@@ -12,19 +12,35 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 
 /**
  * User Signup - Create or retrieve user by email
+ * Now supports Firebase UID for SSO users
  */
 export const signup = async (req: Request, res: Response) => {
   try {
-    const { email } = req.body;
+    const { email, firebaseUid, displayName } = req.body;
     if (!email) return res.status(400).json({ error: "Email is required" });
 
+    // Use Firebase UID as the user ID if provided, otherwise let Prisma generate UUID
     const user = await prisma.user.upsert({
       where: { email },
       update: {},
-      create: { email }
+      create: { 
+        id: firebaseUid || undefined,
+        email 
+      }
     });
+
+    // If user exists but doesn't have a profile with displayName, create/update it
+    if (displayName) {
+      await prisma.userProfile.upsert({
+        where: { userId: user.id },
+        update: { fullName: displayName },
+        create: { userId: user.id, fullName: displayName }
+      });
+    }
+
     res.status(200).json(user);
   } catch (error) {
+    console.error("[User Controller] Signup error:", error);
     res.status(500).json({ error: "Database error" });
   }
 };
@@ -236,5 +252,42 @@ export const getCV = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("[User Controller] Error downloading CV:", error);
     res.status(500).json({ error: "Failed to download CV" });
+  }
+};
+
+/**
+ * Delete CV File - Remove user's CV from disk and database
+ */
+export const deleteCV = async (req: Request, res: Response) => {
+  try {
+    const userId = req.params.userId as string;
+
+    const profile = await prisma.userProfile.findUnique({ where: { userId } });
+
+    if (!profile?.cvFilePath) {
+      return res.status(404).json({ error: "No CV found to delete" });
+    }
+
+    // Delete file from disk
+    if (fs.existsSync(profile.cvFilePath)) {
+      fs.unlinkSync(profile.cvFilePath);
+      console.log('[deleteCV] Deleted file:', profile.cvFilePath);
+    }
+
+    // Clear CV fields in database
+    await prisma.userProfile.update({
+      where: { userId },
+      data: {
+        cvFilePath: null,
+        cvFileName: null,
+        cvParsedText: null,
+        updatedAt: new Date(),
+      }
+    });
+
+    res.status(200).json({ message: "CV deleted successfully" });
+  } catch (error) {
+    console.error("[User Controller] Error deleting CV:", error);
+    res.status(500).json({ error: "Failed to delete CV" });
   }
 };

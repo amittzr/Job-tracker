@@ -7,14 +7,14 @@ import {
   getUserProfile,
   updateUserProfile,
   uploadCV,
-  getCV
+  getCV,
+  deleteCV
 } from '../controllers/userController.js';
+import { authMiddleware, ownershipMiddleware } from '../middleware/authMiddleware.js';
 
 const router = Router();
 
 // ─── Uploads directory ────────────────────────────────────────────────────────
-// Use an absolute path so multer always knows where to write,
-// regardless of the working directory Node was started from.
 const UPLOADS_DIR = path.resolve('uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -23,10 +23,9 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 // ─── Multer storage ───────────────────────────────────────────────────────────
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    cb(null, UPLOADS_DIR); // absolute path — never fails silently
+    cb(null, UPLOADS_DIR);
   },
   filename: (_req, file, cb) => {
-    // e.g. 1718000000000-MyCV.pdf
     const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
     cb(null, `${Date.now()}-${safeName}`);
   }
@@ -55,8 +54,6 @@ const upload = multer({
 });
 
 // ─── Multer error handler ─────────────────────────────────────────────────────
-// Wraps the multer middleware so its errors are returned as proper JSON
-// instead of crashing the server with an HTML 500.
 function uploadSingle(fieldName: string) {
   return (req: any, res: any, next: any) => {
     upload.single(fieldName)(req, res, (err: any) => {
@@ -71,14 +68,14 @@ function uploadSingle(fieldName: string) {
   };
 }
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
+// ─── Public Routes ────────────────────────────────────────────────────────────
 router.post('/signup', signup);
 
-router.get('/:userId/profile', getUserProfile);
-router.patch('/:userId/profile', updateUserProfile);
-
-// Use the wrapper so multer errors are JSON, not crashes
-router.post('/:userId/cv/upload', uploadSingle('cv'), uploadCV);
-router.get('/:userId/cv/download', getCV);
+// ─── Protected Routes (require auth + ownership) ─────────────────────────────
+router.get('/:userId/profile', authMiddleware, ownershipMiddleware, getUserProfile);
+router.patch('/:userId/profile', authMiddleware, ownershipMiddleware, updateUserProfile);
+router.post('/:userId/cv/upload', authMiddleware, ownershipMiddleware, uploadSingle('cv'), uploadCV);
+router.get('/:userId/cv/download', authMiddleware, ownershipMiddleware, getCV);
+router.delete('/:userId/cv', authMiddleware, ownershipMiddleware, deleteCV);
 
 export default router;

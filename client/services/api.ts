@@ -1,17 +1,16 @@
 import axios from 'axios';
 import { Platform } from 'react-native';
+import { auth } from '../config/firebase';
 
 // Configuration for local development machine IP
-// Replace with your actual machine IP from: ipconfig (Windows) or ifconfig (Linux/Mac)
-const DEV_MACHINE_IP = '192.168.1.36';
+const DEV_MACHINE_IP = process.env.EXPO_PUBLIC_DEV_MACHINE_IP || '192.168.1.36';
 
 // Determine the API base URL based on platform
 const getBaseURL = () => {
   if (Platform.OS === 'web') {
     return 'http://localhost:3000/api';
   }
-  
-  // For both Android emulator and physical devices, use machine IP
+  // Mobile (Expo Go / physical device) uses machine IP
   return `http://${DEV_MACHINE_IP}:3000/api`;
 };
 
@@ -21,6 +20,20 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
   timeout: 35000,
+});
+
+// Interceptor: automatically attach Firebase token to every request
+api.interceptors.request.use(async (config) => {
+  try {
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      const token = await currentUser.getIdToken();
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+  } catch (error) {
+    console.error('Error getting auth token:', error);
+  }
+  return config;
 });
 
 // Fetch all jobs for a specific user

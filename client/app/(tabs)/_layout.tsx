@@ -2,7 +2,7 @@ import React from 'react';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Link, Tabs, router } from 'expo-router';
 import { Pressable, View, useColorScheme } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '../../context/AuthContext';
 
 import Colors from '@/constants/Colors';
 
@@ -15,12 +15,18 @@ function TabBarIcon(props: {
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+  const { logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    router.replace('/login');
+  };
 
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        headerShown: true, // וודא שזה true
+        headerShown: true,
       }}>
       <Tabs.Screen
         name="index"
@@ -29,7 +35,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <TabBarIcon name="list" color={color} />,
           headerRight: () => (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              {/* כפתור הוספת משרה */}
+              {/* Add job button */}
               <Link href="/modal" asChild>
                 <Pressable style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}>
                   <FontAwesome
@@ -41,12 +47,9 @@ export default function TabLayout() {
                 </Pressable>
               </Link>
 
-              {/* כפתור התנתקות */}
+              {/* Logout button */}
               <Pressable 
-                onPress={async () => {
-                  await AsyncStorage.removeItem('user');
-                  router.replace('/login');
-                }}
+                onPress={handleLogout}
                 style={({ pressed }) => ({
                   opacity: pressed ? 0.5 : 1,
                   marginRight: 15,

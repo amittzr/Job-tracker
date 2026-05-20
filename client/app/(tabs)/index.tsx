@@ -1,11 +1,11 @@
 import { StyleSheet, FlatList, ActivityIndicator, Pressable, RefreshControl, TextInput, Modal, Alert, TouchableOpacity } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { useEffect, useState, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getJobs, autoAddJob } from '../../services/api'; // וודא שהוספת את autoAddJob ל-api.ts
+import { getJobs, autoAddJob } from '../../services/api';
 import { Link } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 import { FontAwesome } from '@expo/vector-icons';
+import { useAuth } from '../../context/AuthContext';
 
 interface Job {
   id: string;
@@ -18,23 +18,22 @@ interface Job {
 
 export default function TabOneScreen() {
   const isFocused = useIsFocused();
+  const { user } = useAuth();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [filteredJobs, setFilteredJobs] = useState<Job[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // States חדשים עבור ה-AI Agent
+  // States for AI Agent
   const [modalVisible, setModalVisible] = useState(false);
   const [jobUrl, setJobUrl] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
 
   const fetchUserJobs = async () => {
     try {
-      const userString = await AsyncStorage.getItem('user');
-      if (userString) {
-        const user = JSON.parse(userString);
-        const data = await getJobs(user.id);
+      if (user) {
+        const data = await getJobs(user.uid);
         setJobs(data);
         setFilteredJobs(data);
       }
@@ -81,19 +80,16 @@ export default function TabOneScreen() {
 
     setIsAiLoading(true);
     try {
-      // Retrieve user ID from local storage
-      const userString = await AsyncStorage.getItem('user');
-      if (!userString) {
+      if (!user) {
         Alert.alert('Error', 'User not found. Please log in again.');
         setIsAiLoading(false);
         return;
       }
 
-      const user = JSON.parse(userString);
-      console.log('Auto-add job with userId:', user.id);
+      console.log('Auto-add job with userId:', user.uid);
 
       // Call API to analyze and create job
-      await autoAddJob(jobUrl, user.id);
+      await autoAddJob(jobUrl, user.uid);
 
       Alert.alert('Success!', 'Job has been added to your list');
       setModalVisible(false);
@@ -104,7 +100,6 @@ export default function TabOneScreen() {
     } catch (error: any) {
       console.error('handleAiAdd error:', error.message);
       
-      // Provide user-friendly error messages
       let errorMessage = 'Could not analyze the URL. Please try another link or add manually.';
       if (error.message?.includes('timeout')) {
         errorMessage = 'Request timed out. Please try a simpler URL or try again later.';

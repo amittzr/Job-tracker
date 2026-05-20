@@ -1,10 +1,10 @@
 import { StyleSheet, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { useEffect, useState, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 
 interface Stat {
@@ -14,26 +14,22 @@ interface Stat {
 
 export default function DashboardScreen() {
   const isFocused = useIsFocused();
+  const { user } = useAuth();
   const [stats, setStats] = useState<Stat[]>([]);
-  const [allJobs, setAllJobs] = useState<any[]>([]); // כל המשרות לצורך סינון
-  const [selectedStatus, setSelectedStatus] = useState<string | null>(null); // הסטטוס שנבחר
+  const [allJobs, setAllJobs] = useState<any[]>([]);
+  const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchData = async () => {
     try {
-      const userString = await AsyncStorage.getItem('user');
-      if (userString) {
-        const user = JSON.parse(userString);
-        
-        // שליפת סטטיסטיקה
-        const statsRes = await api.get(`/jobs/stats/${user.id}`);
+      if (user) {
+        const statsRes = await api.get(`/jobs/stats/${user.uid}`);
         setStats(statsRes.data.stats);
         setTotal(statsRes.data.totalJobs);
 
-        // שליפת כל המשרות כדי שנוכל להציג אותן לפי בחירה
-        const jobsRes = await api.get(`/jobs/${user.id}`);
+        const jobsRes = await api.get(`/jobs/${user.uid}`);
         setAllJobs(jobsRes.data);
       }
     } catch (error) {

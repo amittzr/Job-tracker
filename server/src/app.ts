@@ -6,6 +6,7 @@ import path from 'path';
 // Import Routes
 import userRoutes from './routes/userRoutes.js';
 import jobRoutes from './routes/jobRoutes.js';
+import { authMiddleware } from './middleware/authMiddleware.js';
 
 dotenv.config();
 
@@ -17,13 +18,16 @@ app.use(express.json());
 // Serve uploaded files (CV files) from the uploads directory
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-// Register Routes
-app.use('/api/users', userRoutes);
-app.use('/api/jobs', jobRoutes);
-
-// Health check endpoint
+// Health check endpoint (public)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
 });
+
+// Public route: signup (needs to work before user has a DB record)
+// The signup route is handled inside userRoutes but doesn't require auth
+app.use('/api/users', userRoutes);
+
+// Protected routes: require valid Firebase token
+app.use('/api/jobs', authMiddleware, jobRoutes);
 
 export default app;

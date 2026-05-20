@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,11 +8,9 @@ import {
   Alert,
   ActivityIndicator,
   StyleSheet,
-  Linking,
 } from 'react-native';
-import axios from 'axios';
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
+import { useAuth } from '../context/AuthContext';
+import api from '../services/api';
 
 interface JobAnalysisResult {
   matchPercentage: number;
@@ -25,7 +23,7 @@ interface JobAnalysisResult {
 type InputMode = 'url' | 'text';
 
 export default function JobAnalysisScreen() {
-  const [userId, setUserId] = useState<string>('');
+  const { user } = useAuth();
   const [inputMode, setInputMode] = useState<InputMode>('url');
   const [jobUrl, setJobUrl] = useState('');
   const [jobText, setJobText] = useState('');
@@ -33,25 +31,10 @@ export default function JobAnalysisScreen() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<JobAnalysisResult | null>(null);
 
-  useEffect(() => {
-    const loadUserId = async () => {
-      try {
-        const stored = await (global as any).getUserId?.();
-        if (stored) {
-          setUserId(stored);
-        }
-      } catch (error) {
-        console.error('Error loading userId:', error);
-      }
-    };
-
-    loadUserId();
-  }, []);
-
   // Validate and submit for analysis
   const handleAnalyze = async () => {
-    if (!userId) {
-      Alert.alert('Error', 'User ID is required');
+    if (!user?.uid) {
+      Alert.alert('Error', 'User not authenticated');
       return;
     }
 
@@ -79,10 +62,7 @@ export default function JobAnalysisScreen() {
         payload.jobTitle = jobTitle;
       }
 
-      const response = await axios.post(
-        `${API_BASE_URL}/jobs/${userId}/analyze-cv`,
-        payload
-      );
+      const response = await api.post(`/jobs/${user.uid}/analyze-cv`, payload);
 
       setResult(response.data.analysis);
       setJobUrl('');

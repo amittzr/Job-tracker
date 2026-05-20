@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { StyleSheet, TextInput, TouchableOpacity, Alert, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { Text, View } from '@/components/Themed';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
+import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 
 export default function AddJobModal() {
+  const { user } = useAuth();
   const [form, setForm] = useState({
     companyName: '',
     jobTitle: '',
@@ -23,12 +24,9 @@ export default function AddJobModal() {
 
     setLoading(true);
     try {
-      const userString = await AsyncStorage.getItem('user');
-      const user = JSON.parse(userString!);
-
       await api.post('/jobs', {
         ...form,
-        userId: user.id
+        userId: user?.uid
       });
 
       Alert.alert('הצלחה', 'המשרה נוספה בהצלחה');

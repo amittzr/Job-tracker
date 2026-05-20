@@ -1,28 +1,18 @@
 import { Stack } from 'expo-router';
-import { useEffect, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useEffect } from 'react';
 import { router } from 'expo-router';
+import { AuthProvider, useAuth } from '../context/AuthContext';
 
-export default function RootLayout() {
-  const [isReady, setIsReady] = useState(false);
+function RootNavigator() {
+  const { user, loading } = useAuth();
 
   useEffect(() => {
-    checkUser();
-  }, []);
-
-  const checkUser = async () => {
-    try {
-      const user = await AsyncStorage.getItem('user');
+    if (!loading) {
       if (!user) {
-        // אם אין משתמש, נשלח אותו ללוגין
         router.replace('/login');
       }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsReady(true);
     }
-  };
+  }, [user, loading]);
 
   return (
     <Stack>
@@ -37,5 +27,13 @@ export default function RootLayout() {
         }} 
       />
     </Stack>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <AuthProvider>
+      <RootNavigator />
+    </AuthProvider>
   );
 }
