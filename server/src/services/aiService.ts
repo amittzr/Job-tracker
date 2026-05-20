@@ -401,3 +401,113 @@ function extractJobDetailsFromText(scraped: { text: string; html: string; title:
     titleFromPage,
   };
 }
+
+/**
+ * Analyze CV Match Against Job Description using Groq API
+ * Compares user's CV skills and experience against job requirements
+ * and provides actionable feedback with match percentage score
+ */
+export async function analyzeCVForJob(
+  cvText: string,
+  jobDescription: string,
+  jobTitle: string = "",
+  userSkills?: string
+): Promise<{
+  matchPercentage: number;
+  strengths: string[];
+  gaps: string[];
+  suggestions: string[];
+  summary: string;
+}> {
+  try {
+    // Build comprehensive prompt for CV analysis
+    const analysisPrompt = `You are a professional career coach and recruiter. Analyze how well a candidate's CV matches a specific job description.
+
+CANDIDATE'S CV:
+${cvText}
+
+CANDIDATE'S SKILLS:
+${userSkills || "Not provided"}
+
+TARGET JOB TITLE:
+${jobTitle}
+
+TARGET JOB DESCRIPTION:
+${jobDescription}
+
+Please provide a detailed analysis in JSON format with the following structure:
+{
+  "matchPercentage": <number 0-100>,
+  "strengths": [<list of 3-5 areas where candidate is strong>],
+  "gaps": [<list of 3-5 technical or soft skills gaps>],
+  "suggestions": [<list of 3-5 actionable tips to improve CV or application>],
+  "summary": "<2-3 sentence overall assessment>"
+}
+
+Be specific and reference actual technologies, tools, or experience mentioned in the CV and job description.
+Return ONLY valid JSON, no additional text.`;
+
+    const response = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: 'mixtral-8x7b-32768',
+        messages: [
+          {
+            role: 'user',
+            content: analysisPrompt
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 1000
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    // Parse response
+    if (!response.data.choices?.[0]?.message?.content) {
+      throw new Error('Invalid Groq response');
+    }
+
+    const content = response.data.choices[0].message.content;
+    
+    // Extract JSON from response (handle potential markdown formatting)
+    let jsonStr = content;
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[0];
+    }
+
+    const analysis = JSON.parse(jsonStr);
+
+    // Validate response structure
+    if (
+      typeof analysis.matchPercentage === 'number' &&
+      Array.isArray(analysis.strengths) &&
+      Array.isArray(analysis.gaps) &&
+      Array.isArray(analysis.suggestions) &&
+      typeof analysis.summary === 'string'
+    ) {
+      // Ensure matchPercentage is between 0-100
+      analysis.matchPercentage = Math.min(100, Math.max(0, analysis.matchPercentage));
+      return analysis;
+    }
+
+    throw new Error('Invalid response structure from Groq');
+  } catch (error) {
+    console.error("[AI Service] CV analysis error:", error);
+    
+    // Return default response on error
+    return {
+      matchPercentage: 0,
+      strengths: ["Unable to analyze CV"],
+      gaps: ["Analysis failed - please try again"],
+      suggestions: ["Please ensure your CV and job description are clearly formatted"],
+      summary: "Analysis could not be completed. Please check your inputs and try again."
+    };
+  }
+}

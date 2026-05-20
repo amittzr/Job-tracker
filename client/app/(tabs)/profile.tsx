@@ -1,0 +1,469 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  TextInput,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  StyleSheet,
+  RefreshControl,
+  Linking,
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { FontAwesome } from '@expo/vector-icons';
+import axios from 'axios';
+import * as DocumentPicker from 'expo-document-picker';
+import { useIsFocused } from '@react-navigation/native';
+
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.36:3000/api';
+
+interface UserProfileData {
+  id: string;
+  userId: string;
+  fullName?: string;
+  professionalTitle?: string;
+  contactInfo?: string;
+  skills?: string;
+  cvFileName?: string;
+  cvFilePath?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface User {
+  id: string;
+  email: string;
+}
+
+export default function ProfileTab() {
+  const isFocused = useIsFocused();
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfileData | null>(null);
+  const [fullName, setFullName] = useState('');
+  const [professionalTitle, setProfessionalTitle] = useState('');
+  const [contactInfo, setContactInfo] = useState('');
+  const [skillsInput, setSkillsInput] = useState('');
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (isFocused) {
+      loadUserAndProfile();
+    }
+  }, [isFocused]);
+
+  const loadUserAndProfile = async () => {
+    try {
+      setLoading(true);
+      const userString = await AsyncStorage.getItem('user');
+      if (!userString) {
+        Alert.alert('Error', 'User not found');
+        return;
+      }
+
+      const userData: User = JSON.parse(userString);
+      setUser(userData);
+
+      const defaultName = userData.email.split('@')[0];
+      setFullName(defaultName);
+
+      try {
+        const response = await axios.get(`${API_BASE_URL}/users/${userData.id}/profile`);
+        setProfile(response.data);
+        setFullName(response.data.fullName || defaultName);
+        setProfessionalTitle(response.data.professionalTitle || '');
+        setContactInfo(response.data.contactInfo || '');
+
+        if (response.data.skills) {
+          const skills =
+            typeof response.data.skills === 'string'
+              ? JSON.parse(response.data.skills)
+              : response.data.skills;
+          setSkillsInput(Array.isArray(skills) ? skills.join(', ') : '');
+        }
+      } catch (error: any) {
+        if (error.response?.status !== 404) {
+          console.error('Error fetching profile:', error);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading user:', error);
+      Alert.alert('Error', 'Failed to load user data');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!user?.id) return Alert.alert('Error', 'User not authenticated');
+    if (!fullName.trim()) return Alert.alert('Validation', 'Please enter your name');
+
+    setSaving(true);
+    try {
+      const skillsArray = skillsInput
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+
+      await axios.patch(`${API_BASE_URL}/users/${user.id}/profile`, {
+        fullName: fullName.trim(),
+        professionalTitle: professionalTitle.trim(),
+        contactInfo: contactInfo.trim(),
+        skills: skillsArray,
+      });
+
+      Alert.alert('Success', 'Profile updated successfully');
+      loadUserAndProfile();
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      Alert.alert('Error', 'Failed to save profile');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ─── Upload CV ──────────────────────────────────────────────────────────────
+  const handleUploadCV = async () => {
+    if (!user?.id) return Alert.alert('Error', 'User not authenticated');
+
+    try {
+      setUploading(true);
+
+      // expo-document-picker v12+ returns an object with `canceled` + `assets[]`
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/pdf',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'text/plain',
+        ],
+        copyToCacheDirectory: true, // ← required: makes the URI readable by the app
+      });
+
+      // ── Handle both old API (type:'success') and new API (canceled + assets) ──
+      let fileUri: string;
+      let fileName: string;
+      let mimeType: string;
+
+      if ('canceled' in result) {
+        // New API (expo-document-picker ≥ 11)
+        if (result.canceled || !result.assets?.length) {
+          setUploading(false);
+          return;
+        }
+        const asset = result.assets[0];
+        fileUri  = asset.uri;
+        fileName = asset.name;
+        mimeType = asset.mimeType ?? 'application/octet-stream';
+      } else {
+        // Legacy API
+        const legacy = result as any;
+        if (legacy.type !== 'success') {
+          setUploading(false);
+          return;
+        }
+        fileUri  = legacy.uri;
+        fileName = legacy.name;
+        mimeType = legacy.mimeType ?? 'application/octet-stream';
+      }
+
+      console.log('[Upload] File selected:', { fileUri, fileName, mimeType });
+
+      const formData = new FormData();
+      formData.append('cv', {
+        uri: fileUri,
+        type: mimeType,
+        name: fileName,
+      } as any);
+
+      const uploadUrl = `${API_BASE_URL}/users/${user.id}/cv/upload`;
+      console.log('[Upload] Posting to:', uploadUrl);
+
+      const response = await axios.post(uploadUrl, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 60_000,
+      });
+
+      console.log('[Upload] Success:', response.data);
+      Alert.alert('✅ Success', `CV uploaded!\n${fileName}`);
+      await loadUserAndProfile();
+    } catch (error: any) {
+      console.error('[Upload] Error:', error);
+
+      let msg = 'Failed to upload CV';
+      if (error.response) {
+        msg = error.response.data?.error || `Server error ${error.response.status}`;
+      } else if (error.request) {
+        msg = `No response from server.\nCheck that the backend is running at:\n${API_BASE_URL}`;
+      } else {
+        msg = error.message;
+      }
+      Alert.alert('Upload Failed', msg);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ─── View / Download CV ─────────────────────────────────────────────────────
+  const handleViewCV = async () => {
+    if (!user?.id || !profile?.cvFileName) {
+      return Alert.alert('Info', 'No CV uploaded yet');
+    }
+
+    setDownloading(true);
+    try {
+      const downloadUrl = `${API_BASE_URL}/users/${user.id}/cv/download`;
+
+      // Open the URL in the device browser — the browser handles the download
+      const supported = await Linking.canOpenURL(downloadUrl);
+      if (supported) {
+        await Linking.openURL(downloadUrl);
+      } else {
+        Alert.alert('Error', `Cannot open URL: ${downloadUrl}`);
+      }
+    } catch (error) {
+      console.error('Error opening CV:', error);
+      Alert.alert('Error', 'Failed to open CV');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#0066cc" />
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      style={styles.container}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadUserAndProfile} />}
+    >
+      {/* Header */}
+      <View style={styles.header}>
+        <FontAwesome name="user-circle" size={60} color="#0066cc" />
+        <Text style={styles.userName}>{fullName}</Text>
+        <Text style={styles.userEmail}>{user?.email}</Text>
+      </View>
+
+      {/* Personal Information */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Personal Information</Text>
+
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Full Name *</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Enter your full name"
+            value={fullName}
+            onChangeText={setFullName}
+            placeholderTextColor="#ccc"
+          />
+        </View>
+
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Professional Title</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g., Senior Developer"
+            value={professionalTitle}
+            onChangeText={setProfessionalTitle}
+            placeholderTextColor="#ccc"
+          />
+        </View>
+
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Contact Info</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g., +1234567890 or LinkedIn URL"
+            value={contactInfo}
+            onChangeText={setContactInfo}
+            placeholderTextColor="#ccc"
+          />
+        </View>
+
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Skills</Text>
+          <TextInput
+            style={[styles.input, styles.multilineInput]}
+            placeholder="Enter skills separated by commas (e.g., JavaScript, React, Node.js)"
+            value={skillsInput}
+            onChangeText={setSkillsInput}
+            multiline
+            numberOfLines={3}
+            placeholderTextColor="#ccc"
+          />
+        </View>
+
+        <TouchableOpacity
+          style={[styles.button, styles.primaryButton, saving && styles.disabledButton]}
+          onPress={handleSaveProfile}
+          disabled={saving}
+        >
+          {saving ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <FontAwesome name="save" size={16} color="#fff" style={{ marginRight: 8 }} />
+              <Text style={styles.buttonText}>Save Profile</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* CV Management */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>CV Management</Text>
+
+        {profile?.cvFileName && (
+          <View style={styles.cvCard}>
+            <FontAwesome name="file-pdf-o" size={32} color="#0066cc" />
+            <View style={styles.cvInfo}>
+              <Text style={styles.cvFileName}>{profile.cvFileName}</Text>
+              <Text style={styles.cvDate}>
+                Updated: {new Date(profile.updatedAt).toLocaleDateString()}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={[styles.button, styles.secondaryButton, uploading && styles.disabledButton]}
+          onPress={handleUploadCV}
+          disabled={uploading}
+        >
+          {uploading ? (
+            <ActivityIndicator color="#0066cc" />
+          ) : (
+            <>
+              <FontAwesome name="cloud-upload" size={16} color="#0066cc" style={{ marginRight: 8 }} />
+              <Text style={styles.buttonTextSecondary}>
+                {profile?.cvFileName ? 'Update CV' : 'Upload CV'}
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        {profile?.cvFileName && (
+          <TouchableOpacity
+            style={[styles.button, styles.outlineButton, downloading && styles.disabledButton]}
+            onPress={handleViewCV}
+            disabled={downloading}
+          >
+            {downloading ? (
+              <ActivityIndicator color="#0066cc" />
+            ) : (
+              <>
+                <FontAwesome name="download" size={16} color="#0066cc" style={{ marginRight: 8 }} />
+                <Text style={styles.buttonTextSecondary}>View / Download CV</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
+
+        <Text style={styles.helperText}>
+          📄 Supported formats: PDF, Word (.docx), Text (.txt){'\n'}
+          📦 Max file size: 10 MB
+        </Text>
+      </View>
+
+      {/* Info */}
+      <View style={styles.infoSection}>
+        <FontAwesome name="info-circle" size={16} color="#666" />
+        <Text style={styles.infoText}>
+          Your CV is securely stored and will be used for AI-powered job matching and analysis.
+        </Text>
+      </View>
+
+      <View style={{ height: 50 }} />
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8f9fa' },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: {
+    backgroundColor: '#fff',
+    padding: 30,
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  userName: { fontSize: 24, fontWeight: '700', marginTop: 12, color: '#1a1a1a' },
+  userEmail: { fontSize: 14, color: '#666', marginTop: 4 },
+  section: {
+    backgroundColor: '#fff',
+    margin: 15,
+    padding: 20,
+    borderRadius: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+  },
+  sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: 15, color: '#1a1a1a' },
+  formGroup: { marginBottom: 15 },
+  label: { fontSize: 14, fontWeight: '600', marginBottom: 6, color: '#333' },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#1a1a1a',
+    backgroundColor: '#fafafa',
+  },
+  multilineInput: { textAlignVertical: 'top', minHeight: 80 },
+  button: {
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    marginVertical: 8,
+  },
+  primaryButton: { backgroundColor: '#0066cc', marginTop: 15 },
+  secondaryButton: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#0066cc' },
+  outlineButton: { backgroundColor: '#f0f7ff', borderWidth: 1, borderColor: '#0066cc' },
+  disabledButton: { opacity: 0.6 },
+  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  buttonTextSecondary: { color: '#0066cc', fontSize: 16, fontWeight: '600' },
+  cvCard: {
+    flexDirection: 'row',
+    backgroundColor: '#f0f7ff',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#0066cc',
+  },
+  cvInfo: { marginLeft: 12, flex: 1 },
+  cvFileName: { fontSize: 14, fontWeight: '600', color: '#0066cc' },
+  cvDate: { fontSize: 12, color: '#666', marginTop: 4 },
+  helperText: { fontSize: 12, color: '#666', marginTop: 12, lineHeight: 18 },
+  infoSection: {
+    flexDirection: 'row',
+    backgroundColor: '#e8f5e9',
+    margin: 15,
+    padding: 15,
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4caf50',
+    alignItems: 'flex-start',
+  },
+  infoText: { flex: 1, marginLeft: 10, fontSize: 13, color: '#2e7d32', lineHeight: 18 },
+});

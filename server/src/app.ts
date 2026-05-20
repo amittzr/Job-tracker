@@ -1,8 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
 
-// ייבוא ה-Routes החדשים
+// Import Routes
 import userRoutes from './routes/userRoutes.js';
 import jobRoutes from './routes/jobRoutes.js';
 
@@ -13,11 +14,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// רישום ה-Routes במערכת
-app.use('/api/users', userRoutes); // כל מה שקשור למשתמשים יתחיל בנתיב הזה
-app.use('/api/jobs', jobRoutes);   // כל מה שקשור למשרות יתחיל בנתיב הזה
+// Serve uploaded files (CV files) from the uploads directory
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-// נתיב בדיקה הקיים
+// Register Routes
+app.use('/api/users', userRoutes);
+app.use('/api/jobs', jobRoutes);
+
+// Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
 });

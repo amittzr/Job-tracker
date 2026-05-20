@@ -1,10 +1,13 @@
 import { Router } from 'express';
-import { createManualJob, getUserJobs, getJobById, deleteJob, updateJobStatus, getJobStats, autoCreateJob } from '../controllers/jobController.js';
+import { createManualJob, getUserJobs, getJobById, deleteJob, updateJobStatus, getJobStats, autoCreateJob, analyzeCVForJobDescription } from '../controllers/jobController.js';
 
 const router = Router();
 
 // AI Agent route - MUST be defined BEFORE parameterized routes to avoid conflicts
 router.post('/auto-add', autoCreateJob);
+
+// CV analysis endpoint
+router.post('/:userId/analyze-cv', analyzeCVForJobDescription);
 
 // Manual job creation
 router.post('/', createManualJob);

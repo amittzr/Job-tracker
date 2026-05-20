@@ -128,6 +128,7 @@ export default function DashboardScreen() {
       {total === 0 && (
         <Text style={styles.emptyText}>אין עדיין נתונים להצגה. הוסף משרה כדי להתחיל!</Text>
       )}
+
       <View style={{ height: 50 }} />
     </ScrollView>
   );
@@ -188,5 +189,37 @@ const styles = StyleSheet.create({
   },
   jobListCompany: { fontWeight: 'bold', fontSize: 16, color: '#333' },
   jobListTitle: { color: '#666', fontSize: 13 },
-  emptyText: { textAlign: 'center', marginTop: 40, color: '#999' }
+  emptyText: { textAlign: 'center', marginTop: 40, color: '#999' },
+  manageSection: {
+    marginTop: 40,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  manageSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 15,
+    textAlign: 'right',
+  },
+  manageButton: {
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 12,
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  manageButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1a1a1a',
+    flex: 1,
+    textAlign: 'right',
+    marginHorizontal: 10,
+  },
 });

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/db.js';
-import { analyzeJobFromUrl } from '../services/aiService.js';
+import { analyzeJobFromUrl, analyzeCVForJob } from '../services/aiService.js';
 
 export const createManualJob = async (req: Request, res: Response) => {
   try {
@@ -155,5 +155,72 @@ export const autoCreateJob = async (req: Request, res: Response) => {
     
     console.error("autoCreateJob error:", error.message);
     return res.status(500).json({ error: "Server failed to process job" });
+  }
+};
+
+/**
+ * Analyze CV against Job Description
+ * Compare user's CV with a provided job description (URL or text)
+ * Returns match percentage, strengths, gaps, and suggestions
+ */
+export const analyzeCVForJobDescription = async (req: Request, res: Response) => {
+  try {
+    const userId = (req.params.userId as string);
+    const { jobDescriptionUrl, jobDescriptionText, jobTitle } = req.body;
+
+    // Validate request
+    if (!jobDescriptionUrl && !jobDescriptionText) {
+      return res.status(400).json({ 
+        error: "Either jobDescriptionUrl or jobDescriptionText is required" 
+      });
+    }
+
+    // Get user's CV and profile
+    const userProfile = await prisma.userProfile.findUnique({
+      where: { userId: userId }
+    });
+
+    if (!userProfile || !userProfile.cvParsedText) {
+      return res.status(404).json({ 
+        error: "User profile or CV not found. Please upload your CV first." 
+      });
+    }
+
+    let jobDescription = jobDescriptionText;
+
+    // If URL provided, extract job description from it
+    if (jobDescriptionUrl && !jobDescription) {
+      const jobData = await analyzeJobFromUrl(jobDescriptionUrl);
+      jobDescription = jobData.jobDescription;
+      if (!jobTitle) {
+        // Use extracted title if not provided
+        (req.body as any).jobTitle = jobData.jobTitle;
+      }
+    }
+
+    if (!jobDescription) {
+      return res.status(400).json({ 
+        error: "Could not extract job description from provided URL" 
+      });
+    }
+
+    // Analyze CV match
+    const analysis = await analyzeCVForJob(
+      userProfile.cvParsedText,
+      jobDescription,
+      jobTitle || "Unknown Position",
+      userProfile.skills || undefined
+    );
+
+    res.status(200).json({
+      analysis,
+      cvFileName: userProfile.cvFileName,
+      analyzedAt: new Date()
+    });
+  } catch (error) {
+    console.error("[Job Controller] CV analysis error:", error);
+    res.status(500).json({ 
+      error: "Failed to analyze CV against job description" 
+    });
   }
 };
