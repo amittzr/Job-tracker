@@ -168,10 +168,3 @@ const firebaseConfig = {
   messagingSenderId: "535026496866",
   appId: "1:535026496866:web:0d8ba9feb16e2cfb2aa83b"
 };
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-
-
-clientID
-535026496866-bjpihhkv0o1k5f1rn0oslmkc26aavo1o.apps.googleusercontent.com
