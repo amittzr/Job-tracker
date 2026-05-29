@@ -48,7 +48,8 @@ export const analyzeCVSchema = z.object({
   jobDescriptionUrl: z.string().url().optional(),
   jobDescriptionText: z.string().optional(),
   jobTitle: z.string().optional(),
+  jobId: z.string().optional(),
 }).refine(
-  (data) => data.jobDescriptionUrl || data.jobDescriptionText,
-  { message: 'Either jobDescriptionUrl or jobDescriptionText is required' }
+  (data) => data.jobDescriptionUrl || data.jobDescriptionText || data.jobId,
+  { message: 'Either jobDescriptionUrl, jobDescriptionText, or jobId is required' }
 );

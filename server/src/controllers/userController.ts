@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 // @ts-ignore - pdf-parse v1 is CommonJS
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import { extractCVStructuredData } from '../services/aiService.js';
 
 // Ensure uploads directory exists on startup
 const UPLOADS_DIR = path.resolve('uploads');
@@ -193,18 +194,31 @@ export const uploadCV = async (req: Request, res: Response) => {
       update: {
         cvFilePath: file.path,
         cvFileName: file.originalname,
-        cvParsedText: cvParsedText.substring(0, 5000),
+        cvParsedText: cvParsedText.substring(0, 10000),
         updatedAt: new Date()
       },
       create: {
         userId,
         cvFilePath: file.path,
         cvFileName: file.originalname,
-        cvParsedText: cvParsedText.substring(0, 5000)
+        cvParsedText: cvParsedText.substring(0, 10000)
       }
     });
 
     console.log('[uploadCV] ✓ Saved. cvFilePath:', profile.cvFilePath);
+
+    // Run Phase 1 (CV structured extraction) in background — don't block the upload response
+    extractCVStructuredData(cvParsedText.substring(0, 10000))
+      .then(async (structuredData) => {
+        await prisma.userProfile.update({
+          where: { userId },
+          data: { cvStructuredData: JSON.stringify(structuredData) }
+        });
+        console.log('[uploadCV] ✓ CV structured data cached');
+      })
+      .catch((err) => {
+        console.warn('[uploadCV] CV structured extraction failed (non-blocking):', err.message);
+      });
 
     res.status(200).json({
       message: "CV uploaded successfully",

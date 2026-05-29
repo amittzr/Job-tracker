@@ -20,6 +20,7 @@ interface Job {
   companyName: string;
   jobTitle: string;
   jobDescription?: string;
+  link?: string;
 }
 
 interface AnalysisResult {
@@ -93,6 +94,13 @@ export default function AnalysisScreen() {
       if (inputMode === 'select') {
         const selectedJob = jobs.find(j => j.id === selectedJobId);
         if (selectedJob) {
+          // Send jobId so server can use cached jobFullDescription
+          payload.jobId = selectedJob.id;
+          // If job has a link, send it as fallback for scraping
+          if (selectedJob.link) {
+            payload.jobDescriptionUrl = selectedJob.link;
+          }
+          // Always send the stored description as fallback
           payload.jobDescriptionText = selectedJob.jobDescription || `${selectedJob.jobTitle} at ${selectedJob.companyName}`;
           payload.jobTitle = selectedJob.jobTitle;
         }
@@ -156,22 +164,13 @@ export default function AnalysisScreen() {
           </View>
         </View>
 
-        {/* Location Match */}
+        {/* Location */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>📍 מיקום</Text>
           <View style={styles.row}>
             <Text style={styles.rowLabel}>מיקום המשרה:</Text>
             <Text style={styles.rowValue}>{result.locationMatch.jobLocation}</Text>
           </View>
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>תואם:</Text>
-            <Text style={[styles.rowValue, { color: result.locationMatch.compatible ? '#10b981' : '#ef4444' }]}>
-              {result.locationMatch.compatible ? '✓ כן' : '✗ לא'}
-            </Text>
-          </View>
-          {result.locationMatch.note && (
-            <Text style={styles.noteText}>{result.locationMatch.note}</Text>
-          )}
         </View>
 
         {/* Skills Analysis */}

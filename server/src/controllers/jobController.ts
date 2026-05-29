@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/db.js';
-import { analyzeJobFromUrl, analyzeCVForJob } from '../services/aiService.js';
+import { analyzeJobFromUrl, analyzeCVForJob, scrapeJobFullText } from '../services/aiService.js';
 
 export const createManualJob = async (req: Request, res: Response) => {
   try {
@@ -142,12 +142,21 @@ export const autoCreateJob = async (req: Request, res: Response) => {
     // Step 1: Analyze the job posting using AI (with fallback)
     const aiData = await analyzeJobFromUrl(url);
 
-    // Step 2: Create database record with AI-extracted data
+    // Step 2: Get full scraped text for future CV analysis
+    let fullDescription: string | null = null;
+    try {
+      fullDescription = await scrapeJobFullText(url);
+    } catch (e) {
+      console.warn('[autoCreateJob] Could not get full text (non-blocking)');
+    }
+
+    // Step 3: Create database record with AI-extracted data
     const newJob = await prisma.jobApplication.create({
       data: {
         companyName: aiData.companyName,
         jobTitle: aiData.jobTitle,
         jobDescription: aiData.jobDescription,
+        jobFullDescription: fullDescription || null,
         requiredExperience: aiData.requiredExperience || null,
         location: aiData.location || null,
         status: aiData.status || "pending",
@@ -179,12 +188,12 @@ export const autoCreateJob = async (req: Request, res: Response) => {
 /**
  * Analyze CV against Job Description
  * Compare user's CV with a provided job description (URL or text)
- * Returns match percentage, strengths, gaps, and suggestions
+ * Uses cached CV structured data and job full description when available
  */
 export const analyzeCVForJobDescription = async (req: Request, res: Response) => {
   try {
     const userId = (req.params.userId as string);
-    const { jobDescriptionUrl, jobDescriptionText, jobTitle } = req.body;
+    const { jobDescriptionUrl, jobDescriptionText, jobTitle, jobId } = req.body;
 
     // Validate request
     if (!jobDescriptionUrl && !jobDescriptionText) {
@@ -204,15 +213,43 @@ export const analyzeCVForJobDescription = async (req: Request, res: Response) =>
       });
     }
 
-    let jobDescription = jobDescriptionText;
+    // Parse cached CV structured data if available
+    let cvStructuredData: any = null;
+    if (userProfile.cvStructuredData) {
+      try {
+        cvStructuredData = JSON.parse(userProfile.cvStructuredData);
+        console.log('[Job Controller] Using cached CV structured data');
+      } catch (e) {
+        console.warn('[Job Controller] Failed to parse cached CV data, will re-extract');
+      }
+    }
 
-    // If URL provided, extract job description from it
-    if (jobDescriptionUrl && !jobDescription) {
-      const jobData = await analyzeJobFromUrl(jobDescriptionUrl);
-      jobDescription = jobData.jobDescription;
-      if (!jobTitle) {
-        // Use extracted title if not provided
-        (req.body as any).jobTitle = jobData.jobTitle;
+    let jobDescription = jobDescriptionText;
+    let resolvedJobTitle = jobTitle;
+
+    // Try to use cached jobFullDescription from DB if jobId provided
+    if (jobId) {
+      const job = await prisma.jobApplication.findUnique({ where: { id: jobId } });
+      if (job?.jobFullDescription) {
+        jobDescription = job.jobFullDescription;
+        resolvedJobTitle = resolvedJobTitle || job.jobTitle;
+        console.log('[Job Controller] Using cached job full description from DB');
+      }
+    }
+
+    // If URL provided and we don't have a good description yet, scrape it
+    if (jobDescriptionUrl && (!jobDescription || jobDescription.length < 200)) {
+      try {
+        const fullText = await scrapeJobFullText(jobDescriptionUrl);
+        if (fullText && fullText.length > (jobDescription?.length || 0)) {
+          jobDescription = fullText;
+        }
+        if (!resolvedJobTitle) {
+          const jobData = await analyzeJobFromUrl(jobDescriptionUrl);
+          resolvedJobTitle = jobData.jobTitle;
+        }
+      } catch (scrapeError) {
+        console.warn("[Job Controller] URL scraping failed, using provided text:", scrapeError);
       }
     }
 
@@ -222,12 +259,13 @@ export const analyzeCVForJobDescription = async (req: Request, res: Response) =>
       });
     }
 
-    // Analyze CV match
+    // Analyze CV match — pass cached structured data to skip Phase 1
     const analysis = await analyzeCVForJob(
       userProfile.cvParsedText,
       jobDescription,
-      jobTitle || "Unknown Position",
-      userProfile.skills || undefined
+      resolvedJobTitle || "Unknown Position",
+      userProfile.skills || undefined,
+      cvStructuredData
     );
 
     res.status(200).json({

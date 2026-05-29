@@ -19,7 +19,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 35000,
+  timeout: 60000,
 });
 
 // Interceptor: automatically attach Firebase token to every request

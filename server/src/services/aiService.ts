@@ -2,7 +2,7 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 
 // Extract and clean text from a URL using local scraping (no AI tokens used)
-const fetchWebText = async (url: string): Promise<{ text: string; html: string; title: string }> => {
+const fetchWebText = async (url: string): Promise<{ text: string; html: string; title: string; fullText: string }> => {
   try {
     const { data: html } = await axios.get(url, {
       headers: {
@@ -32,6 +32,7 @@ const fetchWebText = async (url: string): Promise<{ text: string; html: string; 
       text: cleanText.substring(0, 2500),
       html: html.substring(0, 5000),
       title: pageTitle,
+      fullText: cleanText.substring(0, 6000), // Extended text for CV analysis
     };
   } catch (error: any) {
     console.error("Web scraping error:", error.message);
@@ -184,6 +185,19 @@ ${scraped.text.substring(0, 2500)}`,
   }
 };
 
+/**
+ * Scrape full job posting text for CV analysis (returns more text than analyzeJobFromUrl)
+ */
+export const scrapeJobFullText = async (url: string): Promise<string> => {
+  try {
+    const scraped = await fetchWebText(url);
+    return scraped.fullText || scraped.text;
+  } catch (error: any) {
+    console.error("[AI Service] scrapeJobFullText error:", error.message);
+    return "";
+  }
+};
+
 // Extract years of experience from text using regex patterns
 function extractExperienceFromText(text: string): string {
   // Normalize whitespace
@@ -243,7 +257,7 @@ function extractLocationFromText(text: string): string {
 }
 
 // Smart text extraction without AI
-function extractJobDetailsFromText(scraped: { text: string; html: string; title: string }, url: string): { companyName: string; jobTitle: string; jobDescription: string; requiredExperience: string; location: string; status: string; titleFromPage?: boolean } {
+function extractJobDetailsFromText(scraped: { text: string; html: string; title: string; fullText: string }, url: string): { companyName: string; jobTitle: string; jobDescription: string; requiredExperience: string; location: string; status: string; titleFromPage?: boolean } {
   const cleanText = scraped.text.replace(/\s+/g, " ").trim();
   const $ = cheerio.load(scraped.html);
 
@@ -471,14 +485,75 @@ function extractJobDetailsFromText(scraped: { text: string; html: string; title:
 }
 
 /**
+ * Extract structured data from CV text using AI (Phase 1 - cached)
+ * This runs once when CV is uploaded and the result is stored in DB
+ */
+export async function extractCVStructuredData(cvText: string): Promise<any> {
+  const groqApiKey = process.env.GROQ_API_KEY;
+  if (!groqApiKey) {
+    throw new Error('GROQ_API_KEY not configured');
+  }
+
+  const cvExtractionPrompt = `You are a precise CV parser. Extract structured information from this CV.
+
+CV TEXT:
+${cvText.substring(0, 8000)}
+
+Return ONLY valid JSON (no markdown, no explanation):
+{
+  "totalYearsExperience": <number - calculate from earliest job start year to 2026. If someone started working in 2020, that's 6 years. If no work experience found, return 0>,
+  "earliestJobYear": <number or null - the year the earliest job started>,
+  "latestJobTitle": "<most recent job title>",
+  "technologies": [<list of ALL specific technologies, languages, frameworks, tools mentioned - be exhaustive>],
+  "softSkills": [<communication, leadership, teamwork, etc.>],
+  "education": "<highest degree and field, e.g. 'B.Sc Computer Science' or 'No formal degree mentioned'>",
+  "certifications": [<any certifications or courses>],
+  "industries": [<industries worked in>],
+  "languages": [<spoken/written languages>],
+  "location": "<candidate's location if mentioned, or 'Not mentioned'>"
+}
+
+RULES:
+- For totalYearsExperience: Find the EARLIEST start date in the experience section. Subtract that year from 2026. Example: "2019-2022 at Company A, 2022-Present at Company B" → earliest is 2019, so 2026-2019 = 7 years.
+- For technologies: Include EVERY technology, tool, language, framework, database, cloud service, methodology mentioned anywhere in the CV.
+- Be precise. Only extract what is explicitly stated.`;
+
+  const response = await axios.post(
+    'https://api.groq.com/openai/v1/chat/completions',
+    {
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'user', content: cvExtractionPrompt }],
+      temperature: 0.1,
+      max_tokens: 1000
+    },
+    {
+      headers: { Authorization: `Bearer ${groqApiKey}`, 'Content-Type': 'application/json' },
+      timeout: 30000
+    }
+  );
+
+  const content = response.data.choices[0].message.content;
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+  
+  console.log(`[AI Service] CV structured extraction: ${parsed.totalYearsExperience} years, ${parsed.technologies?.length || 0} technologies`);
+  return parsed;
+}
+
+/**
  * Analyze CV Match Against Job Description using Groq API
- * Enhanced analysis with focus on: experience years, location, skills, requirements
+ * Two-phase approach:
+ *   Phase 1: Structured extraction of CV data (experience, skills, education)
+ *   Phase 2: Comparison against job requirements with detailed scoring
+ *
+ * If cvStructuredData is provided (cached from upload), Phase 1 is skipped.
  */
 export async function analyzeCVForJob(
   cvText: string,
   jobDescription: string,
   jobTitle: string = "",
-  userSkills?: string
+  userSkills?: string,
+  cvStructuredData?: any
 ): Promise<{
   matchPercentage: number;
   experienceMatch: { required: string; yours: string; gap: string };
@@ -489,93 +564,129 @@ export async function analyzeCVForJob(
   suggestions: string[];
   summary: string;
 }> {
+  const groqApiKey = process.env.GROQ_API_KEY;
+  if (!groqApiKey) {
+    throw new Error('GROQ_API_KEY not configured');
+  }
+
   try {
-    const analysisPrompt = `You are an expert career coach and technical recruiter. Perform a detailed analysis of how well a candidate's CV matches a job description.
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PHASE 1: Extract structured data from CV (SKIP if cached)
+    // ═══════════════════════════════════════════════════════════════════════════
+    let cvData: any;
 
-CANDIDATE'S CV:
-${cvText}
+    if (cvStructuredData && cvStructuredData.totalYearsExperience !== undefined) {
+      // Use cached data — no API call needed!
+      console.log('[AI Service] Using cached CV structured data (skipping Phase 1)');
+      cvData = cvStructuredData;
+    } else {
+      // No cache — run Phase 1
+      console.log('[AI Service] No cached CV data, running Phase 1 extraction...');
+      cvData = await extractCVStructuredData(cvText);
+    }
 
-CANDIDATE'S LISTED SKILLS:
-${userSkills || "Not provided separately"}
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PHASE 2: Compare CV against job requirements
+    // ═══════════════════════════════════════════════════════════════════════════
+    const comparisonPrompt = `You are an expert technical recruiter performing a precise CV-to-job match analysis.
 
-TARGET JOB TITLE:
-${jobTitle}
+═══ CANDIDATE PROFILE (extracted from CV) ═══
+• Total Experience: ${cvData.totalYearsExperience} years (working since ${cvData.earliestJobYear || 'unknown'})
+• Latest Role: ${cvData.latestJobTitle || 'Unknown'}
+• Technologies: ${(cvData.technologies || []).join(', ') || 'None listed'}
+• Soft Skills: ${(cvData.softSkills || []).join(', ') || 'None listed'}
+• Education: ${cvData.education || 'Not mentioned'}
+• Certifications: ${(cvData.certifications || []).join(', ') || 'None'}
+• Location: ${cvData.location || 'Not mentioned'}
+• Additional skills from profile: ${userSkills || 'None'}
 
-TARGET JOB DESCRIPTION / REQUIREMENTS:
-${jobDescription}
+═══ TARGET JOB ═══
+Title: ${jobTitle}
+Description & Requirements:
+${jobDescription.substring(0, 4000)}
 
-Analyze and return ONLY valid JSON (no markdown, no extra text) with this exact structure:
+═══ INSTRUCTIONS ═══
+Perform a STRICT and HONEST analysis. Do NOT inflate scores. Be critical.
+
+Scoring guidelines:
+- 85-100%: Almost perfect match. Meets all must-have requirements, has the experience level, knows the core tech stack.
+- 70-84%: Strong match. Meets most requirements, may lack 1-2 skills or slightly less experience.
+- 50-69%: Partial match. Has relevant background but missing key requirements (wrong tech stack, insufficient experience, etc.)
+- 30-49%: Weak match. Some transferable skills but significant gaps.
+- 0-29%: Poor match. Different field or very junior for the role.
+
+Return ONLY valid JSON:
 {
-  "matchPercentage": <number 0-100, overall fit score>,
+  "matchPercentage": <number 0-100, be strict and realistic>,
   "experienceMatch": {
-    "required": "<years required by the JOB, from the job description. e.g. '5+ years' or 'Not specified'>",
-    "yours": "<candidate's total years of professional experience. Calculate from the earliest start year in the Experience section of the CV to 2026. If no Experience section exists or no work dates found, write '0 years'>",
-    "gap": "<difference or 'Meets requirement'>"
+    "required": "<what the JOB asks for, e.g. '5+ years' or '3-5 years'. Extract from job description only. If not stated: 'Not specified'>",
+    "yours": "${cvData.totalYearsExperience} years",
+    "gap": "<e.g. 'Meets requirement', 'Short by 2 years', 'Exceeds by 3 years'>"
   },
   "locationMatch": {
-    "jobLocation": "<location from the JOB DESCRIPTION only, e.g. 'Tel Aviv, Hybrid' or 'Remote' or 'Not specified'>",
-    "compatible": <true if job is remote or location not specified, false if candidate location clearly conflicts>,
+    "jobLocation": "<extract from job description ONLY. e.g. 'Tel Aviv, Hybrid' or 'Remote'>",
+    "compatible": <true/false>,
     "note": "<brief explanation>"
   },
   "skillsAnalysis": {
-    "matched": [<skills from job that candidate HAS based on CV, max 8>],
-    "missing": [<skills from job that candidate LACKS based on CV, max 5>],
-    "bonus": [<candidate skills not required but valuable, max 3>]
+    "matched": [<technologies/skills from the JOB requirements that the candidate HAS. Only include exact matches or very close equivalents. Max 10>],
+    "missing": [<technologies/skills REQUIRED by the job that the candidate does NOT have. Max 8>],
+    "bonus": [<candidate skills not required but relevant/valuable for this role. Max 4>]
   },
   "requirementsAnalysis": {
-    "met": [<requirements from job description that are fully met by CV>],
-    "notMet": [<requirements from job description clearly not met by CV>],
-    "partial": [<requirements partially met with explanation>]
+    "met": [<specific job requirements fully satisfied, be concise. Max 6>],
+    "notMet": [<specific job requirements clearly NOT met. Max 5>],
+    "partial": [<requirements partially met with brief explanation. Max 4>]
   },
-  "strengths": [<3-5 strongest selling points for this specific role>],
-  "suggestions": [<3-5 actionable tips to improve chances: what to add to CV, what to highlight, what to learn>],
-  "summary": "<3 sentence assessment: overall fit, main advantage, main risk>"
+  "strengths": [<4-5 specific selling points for THIS role, based on actual CV content>],
+  "suggestions": [<4-5 actionable, specific tips: what to learn, what to highlight, what to add to CV>],
+  "summary": "<3 sentences: (1) overall assessment, (2) biggest advantage, (3) biggest risk/gap>"
 }
 
 CRITICAL RULES:
-- experienceMatch.yours: Count years from the EARLIEST employment start date in the CV's Experience section to the year 2026. Example: if earliest job started in 2024, yours = "2 years". If no Experience section or no dates, yours = "0 years"
-- experienceMatch.required: Extract ONLY from the job description requirements/qualifications
-- locationMatch.jobLocation: Extract ONLY from the job description, NOT from the CV
-- Skills should be exact technology/tool names (React, not "frontend frameworks")
-- Return ONLY the JSON object, nothing else`;
+- experienceMatch.yours MUST be "${cvData.totalYearsExperience} years" (already calculated)
+- Do NOT put candidate skills in "missing" - only job requirements the candidate lacks
+- Do NOT put job requirements in "matched" skills unless the candidate actually has them
+- Be SPECIFIC: "React" not "frontend", "PostgreSQL" not "databases"
+- If job requires 5+ years and candidate has 2, matchPercentage should NOT exceed 55%`;
 
-    const response = await axios.post(
+    const comparisonResponse = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
-        model: 'llama-3.1-8b-instant',
-        messages: [
-          { role: 'user', content: analysisPrompt }
-        ],
-        temperature: 0.2,
-        max_tokens: 1500
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: comparisonPrompt }],
+        temperature: 0.15,
+        max_tokens: 2000
       },
       {
-        headers: {
-          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 30000
+        headers: { Authorization: `Bearer ${groqApiKey}`, 'Content-Type': 'application/json' },
+        timeout: 35000
       }
     );
 
-    if (!response.data.choices?.[0]?.message?.content) {
-      throw new Error('Invalid Groq response');
+    if (!comparisonResponse.data.choices?.[0]?.message?.content) {
+      throw new Error('Invalid Groq response in comparison phase');
     }
 
-    const content = response.data.choices[0].message.content;
+    const content = comparisonResponse.data.choices[0].message.content;
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     const jsonStr = jsonMatch ? jsonMatch[0] : content;
     const analysis = JSON.parse(jsonStr);
 
-    // Ensure matchPercentage is valid
+    // Validate and clamp matchPercentage
     if (typeof analysis.matchPercentage === 'number') {
-      analysis.matchPercentage = Math.min(100, Math.max(0, analysis.matchPercentage));
+      analysis.matchPercentage = Math.min(100, Math.max(0, Math.round(analysis.matchPercentage)));
+    }
+
+    // Ensure experienceMatch.yours uses our calculated value
+    if (analysis.experienceMatch) {
+      analysis.experienceMatch.yours = `${cvData.totalYearsExperience} years`;
     }
 
     // Fill defaults for missing fields
     return {
       matchPercentage: analysis.matchPercentage ?? 0,
-      experienceMatch: analysis.experienceMatch ?? { required: "Not specified", yours: "Unknown", gap: "Unable to determine" },
+      experienceMatch: analysis.experienceMatch ?? { required: "Not specified", yours: `${cvData.totalYearsExperience} years`, gap: "Unable to determine" },
       locationMatch: analysis.locationMatch ?? { jobLocation: "Not specified", compatible: true, note: "Location not mentioned" },
       skillsAnalysis: analysis.skillsAnalysis ?? { matched: [], missing: [], bonus: [] },
       requirementsAnalysis: analysis.requirementsAnalysis ?? { met: [], notMet: [], partial: [] },
@@ -583,8 +694,13 @@ CRITICAL RULES:
       suggestions: analysis.suggestions ?? [],
       summary: analysis.summary ?? "Analysis completed.",
     };
-  } catch (error) {
-    console.error("[AI Service] CV analysis error:", error);
+  } catch (error: any) {
+    console.error("[AI Service] CV analysis error:", error.message || error);
+
+    // If it's a rate limit error, provide helpful message
+    if (error.response?.status === 429) {
+      console.error("[AI Service] Rate limited by Groq. Consider waiting or upgrading.");
+    }
     
     return {
       matchPercentage: 0,

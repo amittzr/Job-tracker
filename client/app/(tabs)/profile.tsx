@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import { File, Paths } from 'expo-file-system';
+import { File as ExpoFile, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useIsFocused } from '@react-navigation/native';
 import { useAuth } from '../../context/AuthContext';
@@ -244,15 +244,15 @@ export default function ProfileTab() {
 
         const downloadUrl = `${api.defaults.baseURL}/users/${firebaseUser.uid}/cv/download`;
         const fileName = profile.cvFileName || 'CV';
-        const destination = new File(Paths.cache, fileName);
+        const destination = new ExpoFile(Paths.cache, fileName);
 
         // Delete existing cached file if it exists
         if (destination.exists) {
           destination.delete();
         }
 
-        // Download using File.downloadFileAsync with auth headers
-        const downloadedFile = await File.downloadFileAsync(downloadUrl, destination, {
+        // Download using ExpoFile.downloadFileAsync with auth headers
+        const downloadedFile = await ExpoFile.downloadFileAsync(downloadUrl, destination, {
           headers: {
             Authorization: `Bearer ${token}`,
           },

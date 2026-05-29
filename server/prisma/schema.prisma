@@ -32,6 +32,7 @@ model UserProfile {
   cvFilePath        String?   // Path to uploaded CV file
   cvParsedText      String?   // Extracted text from CV for AI processing
   cvFileName        String?   // Original CV file name
+  cvStructuredData  String?   // JSON: parsed CV data (experience, technologies, education) - cached Phase 1
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 }
@@ -42,6 +43,7 @@ model JobApplication {
   jobTitle           String
   status             String   @default("PENDING")
   jobDescription     String?
+  jobFullDescription String?  // Full scraped text from job URL for CV analysis
   link               String?
   notes              String?
   requiredExperience String?  // e.g. "3+ years", "5-7 years"
