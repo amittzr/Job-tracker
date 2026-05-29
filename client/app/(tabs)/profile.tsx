@@ -14,9 +14,12 @@ import {
 } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { useIsFocused } from '@react-navigation/native';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
+import { auth } from '../../config/firebase';
 
 interface UserProfileData {
   id: string;
@@ -192,6 +195,30 @@ export default function ProfileTab() {
     }
   };
 
+  // ─── Helper: get MIME type from filename ────────────────────────────────────
+  const getMimeType = (fileName: string): string => {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'pdf': return 'application/pdf';
+      case 'doc': return 'application/msword';
+      case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      case 'txt': return 'text/plain';
+      default: return 'application/octet-stream';
+    }
+  };
+
+  // ─── Helper: get UTI for iOS Quick Look ─────────────────────────────────────
+  const getUTI = (fileName: string): string => {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'pdf': return 'com.adobe.pdf';
+      case 'doc': return 'com.microsoft.word.doc';
+      case 'docx': return 'org.openxmlformats.wordprocessingml.document';
+      case 'txt': return 'public.plain-text';
+      default: return 'public.data';
+    }
+  };
+
   // ─── View / Download CV ─────────────────────────────────────────────────────
   const handleViewCV = async () => {
     if (!firebaseUser?.uid || !profile?.cvFileName) {
@@ -209,9 +236,37 @@ export default function ProfileTab() {
         const url = URL.createObjectURL(blob);
         window.open(url, '_blank');
       } else {
-        // Mobile: open in browser (will need token in future, for now use Linking)
+        // Mobile: download file with auth token using new expo-file-system API
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) {
+          return Alert.alert('Error', 'Not authenticated');
+        }
+
         const downloadUrl = `${api.defaults.baseURL}/users/${firebaseUser.uid}/cv/download`;
-        await Linking.openURL(downloadUrl);
+        const fileName = profile.cvFileName || 'CV';
+        const destination = new File(Paths.cache, fileName);
+
+        // Delete existing cached file if it exists
+        if (destination.exists) {
+          destination.delete();
+        }
+
+        // Download using File.downloadFileAsync with auth headers
+        const downloadedFile = await File.downloadFileAsync(downloadUrl, destination, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        // Open the file using the system share sheet / Quick Look
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(downloadedFile.uri, {
+            mimeType: getMimeType(fileName),
+            UTI: getUTI(fileName),
+          });
+        } else {
+          Alert.alert('Error', 'Sharing is not available on this device');
+        }
       }
     } catch (error) {
       console.error('Error opening CV:', error);
